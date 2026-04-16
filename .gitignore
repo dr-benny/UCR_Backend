@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+images/
+.venv/
+insertData/
+backups/
+.DS_Store
