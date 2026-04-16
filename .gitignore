@@ -1,8 +1,9 @@
 .env
 __pycache__/
 *.pyc
-images/
+/images/
 .venv/
 insertData/
-backups/
+/backups/*
+!/backups/backup_20260415_030648/
 .DS_Store
