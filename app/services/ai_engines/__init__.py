@@ -24,10 +24,10 @@ logger = logging.getLogger(__name__)
 # ── Engine Registry ───────────────────────────────────────────
 # Key = name used in config/API, Value = import path + class
 _REGISTRY: dict[str, tuple[str, str]] = {
-    "gemini": ("services.ai_engines.gemini_engine", "GeminiEngine"),
+    "gemini": ("app.services.ai_engines.gemini_engine", "GeminiEngine"),
     # Future engines:
-    # "claude": ("services.ai_engines.claude_engine", "ClaudeEngine"),
-    # "gpt4":  ("services.ai_engines.gpt_engine",    "GPTEngine"),
+    # "claude": ("app.services.ai_engines.claude_engine", "ClaudeEngine"),
+    # "gpt4":  ("app.services.ai_engines.gpt_engine",    "GPTEngine"),
 }
 
 # Cache: instantiated engines (one per name, reused)

@@ -123,20 +123,33 @@ try:
 except Exception as e:
     print(f"   ❌ JSON export failed: {e}")
 
-# ── 3. Copy images ────────────────────────────────────────────
-print("3️⃣  Copying image files...")
+# ── 3. Copy images (Only referenced ones) ───────────────────
+print("3️⃣  Copying referenced image files...")
 
 if os.path.exists(IMAGES_DIR):
     img_backup_dir = os.path.join(backup_dir, "images")
-    image_files = [f for f in os.listdir(IMAGES_DIR) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
+    os.makedirs(img_backup_dir, exist_ok=True)
+    
+    # Get set of images referenced in the analyses we just exported
+    referenced_images = {os.path.basename(a["image_path"]) for a in analyses_data if a.get("image_path")}
+    
+    copied_count = 0
+    total_size = 0
+    
+    for img_name in referenced_images:
+        src_path = os.path.join(IMAGES_DIR, img_name)
+        if os.path.exists(src_path):
+            shutil.copy2(src_path, os.path.join(img_backup_dir, img_name))
+            total_size += os.path.getsize(src_path)
+            copied_count += 1
+        else:
+            print(f"   ⚠️ Referenced image not found on disk: {img_name}")
 
-    if image_files:
-        shutil.copytree(IMAGES_DIR, img_backup_dir, dirs_exist_ok=True)
-        total_size = sum(os.path.getsize(os.path.join(img_backup_dir, f)) for f in image_files)
+    if copied_count:
         size_mb = total_size / (1024 * 1024)
-        print(f"   ✅ {len(image_files)} images copied ({size_mb:.2f} MB)")
+        print(f"   ✅ {copied_count} referenced images copied ({size_mb:.2f} MB)")
     else:
-        print("   ⚠️ No image files found in images/")
+        print("   ⚠️ No referenced images were found/copied.")
 else:
     print("   ⚠️ images/ directory not found")
 
