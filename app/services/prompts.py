@@ -268,6 +268,7 @@ Example:
 sky_view_factor:
 "Sky visible between buildings along alley"
 
+Also consider the fact that human is near or far from the camera as well when determining the walk way width (perspective distortion).
 
 Output Format
 Return structured JSON.
