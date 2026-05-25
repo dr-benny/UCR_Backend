@@ -24,6 +24,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from tenacity import AsyncRetrying, before_sleep_log, stop_after_attempt, wait_exponential
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -144,19 +146,24 @@ class BaseAIEngine(ABC):
         temperature: float | None = None,
     ) -> str:
         """
-        Wrapper around _call_api that acquires the global semaphore first.
+        Wrapper around _call_api with global semaphore + automatic retry.
 
-        This single choke-point caps total concurrent AI API calls across
-        the whole app — regardless of whether requests come from batch
-        processing, self-consistency sampling, or single-image calls.
+        Semaphore: caps total concurrent AI API calls across the whole app.
+        Retry: on transient failures (rate limit, timeout, network error),
+        backs off exponentially and retries up to 3 times before giving up.
 
-        Example without this:
-          batch=5 images × samples=3 = 15 simultaneous Gemini calls → rate limit
-        Example with this (AI_MAX_CONCURRENT=10):
-          same scenario → max 10 calls at a time, remaining 5 queue up
+        The semaphore is acquired inside each attempt so it is released
+        during backoff — other callers can proceed while we wait to retry.
         """
-        async with _get_semaphore():
-            return await self._call_api(img_bytes, mime_type, temperature)
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=2, max=30),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        ):
+            with attempt:
+                async with _get_semaphore():
+                    return await self._call_api(img_bytes, mime_type, temperature)
 
     # ── Aggregation ───────────────────────────────────────────
 
