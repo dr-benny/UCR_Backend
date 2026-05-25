@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # ── Create tables ─────────────────────────────────────────────
 Base.metadata.create_all(bind=engine)
 
+
 # ── FastAPI app ───────────────────────────────────────────────
 app = FastAPI(
     title="Urban Microclimate Analyzer",

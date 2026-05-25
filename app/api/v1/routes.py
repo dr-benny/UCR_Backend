@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -12,6 +12,7 @@ from app.dao.analysis_dao import AnalysisDAO
 from app.dao.route_dao import RouteDAO
 from app.schemas import AnalysisResponse, RouteCreate, RouteResponse
 from app.services.analysis_service import reanalyze_record
+from app.services.export_service import KMLService
 
 logger = logging.getLogger(__name__)
 
@@ -71,4 +72,28 @@ async def reanalyze_route(route_id: int, db: Session = Depends(get_db)):
             logger.exception("Re-analysis failed for analysis #%d", record.id)
 
     return results
+
+
+@router.get("/routes/{route_id}/export/kml")
+def export_route_kml(route_id: int, db: Session = Depends(get_db)):
+    """
+    Export the route as a KML file.
+    Each point includes a line segment representing the detected street width.
+    """
+    route = RouteDAO.get_by_id(db, route_id)
+    if not route:
+        raise HTTPException(status_code=404, detail="Route not found")
+
+    analyses = AnalysisDAO.get_by_route(db, route_id)
+    if not analyses:
+        raise HTTPException(status_code=404, detail="No analyses found for this route")
+
+    kml_content = KMLService.generate_street_width_kml(analyses, route_name=route.name or f"Route {route_id}")
+    
+    filename = f"route_{route_id}_width.kml"
+    return Response(
+        content=kml_content,
+        media_type="application/vnd.google-earth.kml+xml",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 

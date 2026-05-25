@@ -1,4 +1,5 @@
 .env
+scratch/
 __pycache__/
 *.pyc
 /images/
@@ -6,4 +7,5 @@ __pycache__/
 insertData/
 /backups/*
 !/backups/backup_20260420_104611/
+.claude/
 .DS_Store

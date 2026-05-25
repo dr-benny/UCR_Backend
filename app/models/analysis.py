@@ -74,9 +74,21 @@ class StreetAnalysis(Base):
 
     @property
     def walkway_width_m(self) -> Optional[float]:
-        if self.urban_morphology:
-             val = self.urban_morphology.get("street_width")
-             if isinstance(val, (int, float)): return float(val)
+        if not self.urban_morphology:
+            return None
+            
+        val = self.urban_morphology.get("street_width")
+        if isinstance(val, (int, float)):
+            return float(val)
+        
+        if isinstance(val, str):
+            val = val.lower()
+            if "very_narrow" in val: return 0.5
+            if "very_wide" in val: return 10.0
+            if "narrow" in val: return 1.5
+            if "moderate" in val: return 3.0
+            if "wide" in val: return 6.0
+            
         return None
 
     @property

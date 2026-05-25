@@ -8,6 +8,7 @@ from .analysis import (
     SurfaceAndFlood,
     HealthLivability,
 )
+from .job import JobPoint, RouteJobCreate, JobProgress, JobResponse
 
 __all__ = [
     "RouteBase",
@@ -20,4 +21,8 @@ __all__ = [
     "Vegetation",
     "SurfaceAndFlood",
     "HealthLivability",
+    "JobPoint",
+    "RouteJobCreate",
+    "JobProgress",
+    "JobResponse",
 ]

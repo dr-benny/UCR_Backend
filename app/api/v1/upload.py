@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -80,7 +81,7 @@ async def analyze_upload_single(
     "/analyze/upload/batch",
     response_model=list[AnalysisResponse],
     status_code=201,
-    summary="Analyze multiple uploaded images with optimized parameters",
+    summary="Analyze multiple uploaded images in parallel",
 )
 async def analyze_upload_batch(
     files: list[UploadFile] = File(..., description="One or more street-level images"),
@@ -92,13 +93,19 @@ async def analyze_upload_batch(
         ),
     ),
     route_id: Optional[int] = Form(None, description="Global route ID for this batch"),
+    concurrency: int = Form(5, ge=1, le=10, description="Max parallel Gemini calls (1–10)"),
     db: Session = Depends(get_db),
 ):
     """
-    Analyze **multiple user-uploaded** images.
+    Analyze **multiple user-uploaded** images **in parallel**.
 
     - **route_id**: If provided at the top level, all images use this route.
-    - **metadata**: Only latitude/longitude required. Specific route_id/order_index inside here will override global values.
+    - **metadata**: Only latitude/longitude required. route_id/order_index inside override global values.
+    - **concurrency**: How many images to analyze at the same time (default 5).
+
+    ## การทำงาน
+    1. อ่านไฟล์ทั้งหมดพร้อมกัน (I/O-bound — ไม่ต้องใช้ Semaphore)
+    2. ส่งไป Gemini พร้อมกัน โดยจำกัดด้วย Semaphore
     """
     # ── Validate metadata ─────────────────────────────────────
     try:
@@ -114,45 +121,59 @@ async def analyze_upload_batch(
     if len(files) > 20:
         raise HTTPException(status_code=400, detail="Maximum 20 images per batch request")
 
-    # ── Process each file ─────────────────────────────────────
-    results: list[AnalysisResponse] = []
-    errors: list[dict] = []
+    # ── Step 1: อ่านไฟล์ทั้งหมดก่อน (ทำพร้อมกัน) ─────────────
+    # ต้องอ่านก่อน analyze เพราะ UploadFile stream อ่านได้ครั้งเดียว
+    # gather ที่นี่ OK เพราะเป็น disk I/O ไม่ได้ยิง Gemini
+    file_contents: list[tuple[bytes, str]] = await asyncio.gather(
+        *[_read_upload(f) for f in files]
+    )
 
-    for idx, (file, meta) in enumerate(zip(files, meta_list)):
-        try:
-            lat = meta.get("latitude")
-            lng = meta.get("longitude")
-            if lat is None or lng is None:
-                raise ValueError(f"metadata[{idx}] missing coordinates")
+    # ── Step 2: Analyze พร้อมกัน (คุมด้วย Semaphore) ──────────
+    sem = asyncio.Semaphore(concurrency)
 
-            mime = file.content_type or "image/jpeg"
-            validate_mime(mime)
+    async def _analyze_one(idx: int, img_bytes: bytes, mime: str, meta: dict) -> AnalysisResponse | None:
+        async with sem:
+            try:
+                lat = meta.get("latitude")
+                lng = meta.get("longitude")
+                if lat is None or lng is None:
+                    raise ValueError(f"metadata[{idx}] missing coordinates")
+                if not img_bytes:
+                    raise ValueError(f"File #{idx} is empty")
 
-            img_bytes = await file.read()
-            if not img_bytes:
-                raise ValueError(f"File #{idx} is empty")
+                inp = AnalysisInput(
+                    latitude=float(lat),
+                    longitude=float(lng),
+                    heading=meta.get("heading"),
+                    pitch=meta.get("pitch", 0),
+                    fov=meta.get("fov", 90),
+                    route_id=meta.get("route_id") or route_id,
+                    order_index=meta.get("order_index", idx),
+                )
+                record = await analyze_from_upload(
+                    db, inp, img_bytes, mime_type=mime,
+                    original_filename=files[idx].filename,
+                )
+                return AnalysisResponse.from_orm_model(record)
 
-            # logic: ใช้ค่าจาก meta ถ้ามี, ถ้าไม่มีใช้ global (route_id) หรือ sequence (idx)
-            inp = AnalysisInput(
-                latitude=float(lat),
-                longitude=float(lng),
-                heading=meta.get("heading"),
-                pitch=meta.get("pitch", 0),
-                fov=meta.get("fov", 90),
-                route_id=meta.get("route_id") or route_id,
-                order_index=meta.get("order_index", idx),
-            )
+            except Exception:
+                logger.exception("Batch upload: failed on file #%d", idx)
+                return None
 
-            record = await analyze_from_upload(
-                db, inp, img_bytes, mime_type=mime, original_filename=file.filename,
-            )
-            results.append(AnalysisResponse.from_orm_model(record))
+    raw = await asyncio.gather(
+        *[_analyze_one(i, b, m, meta_list[i]) for i, (b, m) in enumerate(file_contents)]
+    )
 
-        except Exception as exc:
-            logger.exception("Batch upload: failed on file #%d", idx)
-            errors.append({"index": idx, "error": str(exc)})
-
-    if errors:
-        logger.warning("Batch upload completed with %d error(s): %s", len(errors), errors)
+    results = [r for r in raw if r is not None]
+    failed = len(raw) - len(results)
+    if failed:
+        logger.warning("Batch upload: %d/%d images failed", failed, len(raw))
 
     return results
+
+
+async def _read_upload(file: UploadFile) -> tuple[bytes, str]:
+    """อ่าน bytes และ mime type จาก UploadFile พร้อม validate"""
+    mime = file.content_type or "image/jpeg"
+    validate_mime(mime)
+    return await file.read(), mime

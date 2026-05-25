@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -55,41 +56,58 @@ async def analyze_location(body: AnalyzeRequest, db: Session = Depends(get_db)):
 async def analyze_batch(
     locations: list[AnalyzeRequest],
     route_id: Optional[int] = Query(None, description="Global route ID for this batch"),
+    concurrency: int = Query(5, ge=1, le=10, description="Max parallel Gemini calls (1–10)"),
     db: Session = Depends(get_db),
 ):
     """
-    Analyze multiple Street View locations.
+    Analyze multiple Street View locations **in parallel**.
 
     - **route_id**: If provided in query, acts as the default for all locations.
     - **order_index**: If 0 or missing in loc, it will be auto-assigned 0, 1, 2...
+    - **concurrency**: How many locations to analyze at the same time (default 5).
+      Lower this if you hit Gemini rate limits.
+
+    ## Why parallel?
+    Each Gemini call takes ~2–4 s. Sequential: 10 points = ~30 s.
+    With concurrency=5: 10 points ≈ 6–8 s.
     """
     if len(locations) > 20:
         raise HTTPException(status_code=400, detail="Maximum 20 locations per batch request")
 
-    results: list[AnalysisResponse] = []
-    for idx, loc in enumerate(locations):
-        # logic: ใช้ค่าจาก json ถ้ามี, ถ้าไม่มีใช้ค่า global หรือลำดับ index
-        final_route_id = loc.route_id or route_id
-        final_order = loc.order_index if loc.order_index != 0 else idx
+    # Semaphore = ประตูที่อนุญาตให้เข้าได้พร้อมกันสูงสุด N คน
+    # ถ้าเต็มแล้ว task ใหม่จะรอในคิวจนกว่าจะมีคนออก
+    sem = asyncio.Semaphore(concurrency)
 
-        inp = AnalysisInput(
-            latitude=loc.latitude,
-            longitude=loc.longitude,
-            heading=loc.heading,
-            pitch=loc.pitch,
-            fov=loc.fov,
-            route_id=final_route_id,
-            order_index=final_order,
-        )
-        try:
-            record = await analyze_from_streetview(db, inp)
-            results.append(AnalysisResponse.from_orm_model(record))
-        except LookupError:
-            logger.warning("No coverage at (%s, %s) — skipping", loc.latitude, loc.longitude)
-        except Exception as exc:
-            logger.exception("Failed to process (%s, %s)", loc.latitude, loc.longitude)
+    async def _analyze_one(idx: int, loc: AnalyzeRequest) -> AnalysisResponse | None:
+        """Wrapper ที่ใช้ Semaphore คุมจำนวน concurrent calls"""
+        async with sem:  # <-- จะเข้าได้เมื่อมี slot ว่าง
+            final_route_id = loc.route_id or route_id
+            final_order = loc.order_index if loc.order_index != 0 else idx
+            inp = AnalysisInput(
+                latitude=loc.latitude,
+                longitude=loc.longitude,
+                heading=loc.heading,
+                pitch=loc.pitch,
+                fov=loc.fov,
+                route_id=final_route_id,
+                order_index=final_order,
+            )
+            try:
+                record = await analyze_from_streetview(db, inp)
+                return AnalysisResponse.from_orm_model(record)
+            except LookupError:
+                logger.warning("No coverage at (%s, %s) — skipping", loc.latitude, loc.longitude)
+                return None
+            except Exception:
+                logger.exception("Failed to process (%s, %s)", loc.latitude, loc.longitude)
+                return None
 
-    return results
+    # asyncio.gather ปล่อยทุก coroutine วิ่งพร้อมกัน
+    # Semaphore ข้างในจะจำกัดไม่ให้เกิน `concurrency` calls จริงๆ
+    raw = await asyncio.gather(*[_analyze_one(i, loc) for i, loc in enumerate(locations)])
+
+    # กรอง None ออก (points ที่ fail หรือไม่มี coverage)
+    return [r for r in raw if r is not None]
 
 
 # ── CRUD (read / delete) ─────────────────────────────────────
