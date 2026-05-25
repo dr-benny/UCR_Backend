@@ -12,7 +12,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
-from app.db.database import Base, engine
 from app.api.v1 import router as analysis_router
 
 # ── Logging ───────────────────────────────────────────────────
@@ -21,9 +20,6 @@ logging.basicConfig(
     format="%(asctime)s │ %(levelname)-8s │ %(name)s │ %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-# ── Create tables ─────────────────────────────────────────────
-Base.metadata.create_all(bind=engine)
 
 
 # ── FastAPI app ───────────────────────────────────────────────
