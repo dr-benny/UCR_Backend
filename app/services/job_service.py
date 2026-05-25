@@ -49,6 +49,13 @@ async def _run_route_job(job_id: str, request: dict[str, Any]) -> None:
     db = SessionLocal()
     redis = aioredis.from_url(settings.REDIS_URL)
 
+    def _prog(current: int, total: int) -> dict:
+        return {
+            "current": current,
+            "total": total,
+            "percent": round(current / total * 100) if total else 0,
+        }
+
     async def publish(payload: dict) -> None:
         channel = _JOB_CHANNEL.format(job_id=job_id)
         await redis.publish(channel, json.dumps(payload))
@@ -63,7 +70,7 @@ async def _run_route_job(job_id: str, request: dict[str, Any]) -> None:
         route_name = name or f"Job {job_id[:8]}"
         route = RouteDAO.create_route(db, name=route_name, description=description)
         JobDAO.mark_started(db, job_id, route_id=route.id)
-        await publish({"status": "processing", "progress": {"current": 0, "total": total}, "route_id": route.id})
+        await publish({"status": "processing", "progress": _prog(0, total), "route_id": route.id})
         logger.info("Job %s started — route=%d, points=%d", job_id, route.id, total)
 
         sem = asyncio.Semaphore(concurrency)
@@ -93,7 +100,7 @@ async def _run_route_job(job_id: str, request: dict[str, Any]) -> None:
                 finally:
                     job = JobDAO.increment_progress(db, job_id)
                     current = job.progress_current if job else idx + 1
-                    await publish({"status": "processing", "progress": {"current": current, "total": total}, "route_id": route.id})
+                    await publish({"status": "processing", "progress": _prog(current, total), "route_id": route.id})
 
         await asyncio.gather(*[_process_one(i, p) for i, p in enumerate(points)])
 
@@ -105,7 +112,7 @@ async def _run_route_job(job_id: str, request: dict[str, Any]) -> None:
             "failed_points": failed_points,
         }
         JobDAO.mark_done(db, job_id, result_data=result_data)
-        await publish({"status": "done", "progress": {"current": total, "total": total}, "route_id": route.id, "result": result_data})
+        await publish({"status": "done", "progress": _prog(total, total), "route_id": route.id, "result": result_data})
         logger.info("Job %s done — %d ok, %d failed", job_id, len(analysis_ids), len(failed_points))
 
     except Exception as exc:
