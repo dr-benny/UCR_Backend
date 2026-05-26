@@ -9,6 +9,13 @@ from .analysis import (
     HealthLivability,
 )
 from .job import JobPoint, RouteJobCreate, JobProgress, JobResponse
+from .sensor_reading import (
+    SensorReadingIn,
+    SensorBulkUpload,
+    SensorReadingOut,
+    DatasetSummary,
+    BulkUploadResult,
+)
 
 __all__ = [
     "RouteBase",
@@ -25,4 +32,9 @@ __all__ = [
     "RouteJobCreate",
     "JobProgress",
     "JobResponse",
+    "SensorReadingIn",
+    "SensorBulkUpload",
+    "SensorReadingOut",
+    "DatasetSummary",
+    "BulkUploadResult",
 ]

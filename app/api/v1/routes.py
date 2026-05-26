@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.dao.analysis_dao import AnalysisDAO
 from app.dao.route_dao import RouteDAO
+from app.dao.sensor_reading_dao import SensorReadingDAO
 from app.schemas import AnalysisResponse, RouteCreate, RouteResponse
 from app.services.analysis_service import reanalyze_record
-from app.services.export_service import KMLService
+from app.services.export_service import build_route_kmz
 
 logger = logging.getLogger(__name__)
 
@@ -74,26 +78,47 @@ async def reanalyze_route(route_id: int, db: Session = Depends(get_db)):
     return results
 
 
-@router.get("/routes/{route_id}/export/kml")
-def export_route_kml(route_id: int, db: Session = Depends(get_db)):
+@router.get("/routes/{route_id}/export/kmz")
+def export_route_kmz(
+    route_id: int,
+    temp: bool = Query(True, description="Include temperature layer"),
+    humid: bool = Query(True, description="Include humidity layer"),
+    lux: bool = Query(True, description="Include lux layer"),
+    uv: bool = Query(True, description="Include UV layer"),
+    export_mode: str = Query("all", pattern="^(all|minmax)$", description="all = full path, minmax = path + min/max stars"),
+    db: Session = Depends(get_db),
+):
     """
-    Export the route as a KML file.
-    Each point includes a line segment representing the detected street width.
+    Export the route as a KMZ file with:
+      - AI Spatial Analysis (street width, wall heights, H/W ratio, observations)
+      - Environmental Sensor data (temp/humid/lux/uv as colored trajectories)
+
+    Both layers ship with self-explanatory legends rendered as ScreenOverlays.
     """
     route = RouteDAO.get_by_id(db, route_id)
     if not route:
         raise HTTPException(status_code=404, detail="Route not found")
 
     analyses = AnalysisDAO.get_by_route(db, route_id)
-    if not analyses:
-        raise HTTPException(status_code=404, detail="No analyses found for this route")
+    readings = SensorReadingDAO.list_by_route(db, route_id)
+    if not analyses and not readings:
+        raise HTTPException(status_code=404, detail="No analyses or sensor readings found for this route")
 
-    kml_content = KMLService.generate_street_width_kml(analyses, route_name=route.name or f"Route {route_id}")
-    
-    filename = f"route_{route_id}_width.kml"
-    return Response(
-        content=kml_content,
-        media_type="application/vnd.google-earth.kml+xml",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    out_path = os.path.join(
+        tempfile.gettempdir(),
+        f"route_{route_id}_{(route.name or 'export').replace(' ', '_')}.kmz",
+    )
+    build_route_kmz(
+        route=route,
+        analyses=analyses,
+        sensor_readings=readings,
+        out_path=out_path,
+        enabled_sensors={"temp": temp, "humid": humid, "lux": lux, "uv": uv},
+        export_mode=export_mode,
+    )
+    return FileResponse(
+        out_path,
+        media_type="application/vnd.google-earth.kmz",
+        filename=os.path.basename(out_path),
     )
 

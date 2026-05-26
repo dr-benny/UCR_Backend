@@ -30,8 +30,15 @@ class SurveyRoute(Base):
 
     # ── Relationships ─────────────────────────────────────────
     analyses = relationship(
-        "StreetAnalysis", 
-        back_populates="route", 
-        cascade="all, delete-orphan", 
+        "StreetAnalysis",
+        back_populates="route",
+        cascade="all, delete-orphan",
         order_by="StreetAnalysis.order_index"
+    )
+
+    sensor_readings = relationship(
+        "SensorReading",
+        back_populates="route",
+        cascade="all, delete-orphan",
+        order_by="SensorReading.recorded_at",
     )
