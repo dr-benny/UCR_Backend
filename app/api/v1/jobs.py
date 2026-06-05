@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from typing import Any
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 
 from app.core.config import settings
-from app.schemas.job import JobProgress, JobResponse, RouteJobCreate
+from app.schemas.job import JobProgress, JobResponse
+from app.services.analysis_service import save_image, validate_mime
 from app.worker import celery_app
 
 logger = logging.getLogger(__name__)
@@ -32,17 +34,40 @@ def _to_response(job_id: str, state: dict) -> JobResponse:
         status=state.get("status", "unknown"),
         progress=JobProgress(**prog),
         results=state.get("results"),
-        failed_points=state.get("failed_points"),
+        failed=state.get("failed"),
         error=state.get("error"),
     )
 
 
-@router.post("/route", response_model=JobResponse, status_code=202)
-async def submit_route_job(body: RouteJobCreate) -> JobResponse:
-    job_id = str(uuid.uuid4())
-    request_data = body.model_dump()
-    total = len(body.points)
+@router.post("/images", response_model=JobResponse, status_code=202)
+async def submit_image_job(
+    files: list[UploadFile] = File(..., description="One or more images to analyze"),
+    concurrency: int = Form(5, ge=1, le=10),
+) -> JobResponse:
+    """
+    Submit a batch of images for async AI analysis.
 
+    Returns immediately with a job_id. Connect to WS /api/jobs/{id}/ws
+    for real-time progress, or poll GET /api/jobs/{id} for results.
+    """
+    if len(files) > 200:
+        raise HTTPException(status_code=400, detail="Maximum 200 images per job")
+
+    saved: list[dict[str, Any]] = []
+    for file in files:
+        mime = file.content_type or "image/jpeg"
+        try:
+            validate_mime(mime)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        img_bytes = await file.read()
+        if not img_bytes:
+            raise HTTPException(status_code=400, detail=f"File '{file.filename}' is empty")
+        path = save_image(img_bytes, file.filename)
+        saved.append({"path": path, "filename": file.filename})
+
+    job_id = str(uuid.uuid4())
+    total = len(saved)
     initial = {
         "status": "pending",
         "progress": {"current": 0, "total": total, "percent": 0},
@@ -54,8 +79,8 @@ async def submit_route_job(body: RouteJobCreate) -> JobResponse:
     finally:
         await redis.aclose()
 
-    celery_app.send_task("process_route_job", args=[job_id, request_data])
-    logger.info("Enqueued job %s (%d points)", job_id, total)
+    celery_app.send_task("process_image_job", args=[job_id, {"images": saved, "concurrency": concurrency}])
+    logger.info("Enqueued job %s (%d images)", job_id, total)
 
     return _to_response(job_id, initial)
 
@@ -70,7 +95,6 @@ async def get_job(job_id: str) -> JobResponse:
 
     if not state:
         raise HTTPException(status_code=404, detail="Job not found")
-
     return _to_response(job_id, state)
 
 

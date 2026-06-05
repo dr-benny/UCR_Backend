@@ -2,21 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
-
-
-class JobPoint(BaseModel):
-    latitude: float
-    longitude: float
-    heading: Optional[float] = None
-    pitch: float = 0
-    fov: float = 90
-
-
-class RouteJobCreate(BaseModel):
-    name: Optional[str] = None
-    points: list[JobPoint] = Field(..., min_length=1, max_length=200)
-    concurrency: int = Field(5, ge=1, le=10)
+from pydantic import BaseModel
 
 
 class JobProgress(BaseModel):
@@ -30,5 +16,5 @@ class JobResponse(BaseModel):
     status: str
     progress: JobProgress
     results: Optional[list[dict[str, Any]]] = None
-    failed_points: Optional[list[dict[str, Any]]] = None
+    failed: Optional[list[dict[str, Any]]] = None
     error: Optional[str] = None

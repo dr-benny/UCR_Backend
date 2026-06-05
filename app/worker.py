@@ -24,7 +24,7 @@ celery_app.conf.update(
 )
 
 
-@celery_app.task(name="process_route_job")
-def process_route_job(job_id: str, request: dict) -> None:
-    from app.services.job_service import _run_route_job
-    asyncio.run(_run_route_job(job_id, request))
+@celery_app.task(name="process_image_job")
+def process_image_job(job_id: str, request: dict) -> None:
+    from app.services.job_service import _run_image_job
+    asyncio.run(_run_image_job(job_id, request))
