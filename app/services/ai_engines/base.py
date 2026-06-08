@@ -308,25 +308,37 @@ class BaseAIEngine(ABC):
 
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any]:
-        """Best-effort extraction of a JSON object from any AI response."""
+        """Best-effort extraction of a JSON object from any AI response.
+
+        If the model returns a JSON array, the first element is unwrapped so
+        callers always receive a dict (prompts that return batch arrays still
+        work when images are sent one-at-a-time).
+        """
         text = text.strip()
 
+        def _unwrap(value: Any) -> dict[str, Any]:
+            if isinstance(value, list) and value and isinstance(value[0], dict):
+                return value[0]
+            if isinstance(value, dict):
+                return value
+            return {"_raw_text": str(value), "_parse_error": True}
+
         try:
-            return json.loads(text)
+            return _unwrap(json.loads(text))
         except json.JSONDecodeError:
             pass
 
         match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group(1))
+                return _unwrap(json.loads(match.group(1)))
             except json.JSONDecodeError:
                 pass
 
-        match = re.search(r"\{.*\}", text, re.DOTALL)
+        match = re.search(r"[\[{].*[\]}]", text, re.DOTALL)
         if match:
             try:
-                return json.loads(match.group(0))
+                return _unwrap(json.loads(match.group(0)))
             except json.JSONDecodeError:
                 pass
 
