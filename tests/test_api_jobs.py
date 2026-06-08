@@ -65,6 +65,8 @@ class _InMemoryRedis:
 
     async def publish(self, *_): pass
 
+    async def ping(self): return True
+
     async def aclose(self): pass
 
 
@@ -340,3 +342,54 @@ def test_export_invalid_format_returns_400(mock_from_url, client):
 
     r = client.get(f"/api/jobs/{FAKE_JOB_ID}/export?format=xml")
     assert r.status_code == 400
+
+
+# ── update_state merge (bug #1 regression) ────────────────────
+
+async def test_update_state_preserves_unset_fields():
+    """Worker writing status/progress must not wipe _task_id/engine/model."""
+    from app.services.job_store import update_state, get_state
+
+    redis = _InMemoryRedis()
+    await redis.set(
+        JOB_KEY.format(job_id=FAKE_JOB_ID),
+        json.dumps({
+            "status": "pending",
+            "engine": "claude",
+            "model": "claude-opus-4-8",
+            "_task_id": FAKE_TASK_ID,
+            "_images": [{"path": "/x.jpg", "filename": "x.jpg"}],
+        }),
+    )
+
+    await update_state(redis, FAKE_JOB_ID, {"status": "processing", "progress": {"current": 0}})
+
+    merged = await get_state(redis, FAKE_JOB_ID)
+    assert merged["status"] == "processing"          # updated
+    assert merged["_task_id"] == FAKE_TASK_ID          # preserved → delete can still revoke
+    assert merged["engine"] == "claude"                # preserved → API response keeps engine
+    assert merged["model"] == "claude-opus-4-8"        # preserved
+
+
+# ── /health/ready ─────────────────────────────────────────────
+
+@patch("app.main.aioredis.from_url")
+def test_readiness_ok(mock_from_url, client):
+    mock_from_url.return_value = _InMemoryRedis()
+    r = client.get("/health/ready")
+    assert r.status_code == 200
+    assert r.json()["redis"] == "ok"
+
+
+@patch("app.main.aioredis.from_url")
+def test_readiness_redis_down_returns_503(mock_from_url, client):
+    broken = _InMemoryRedis()
+
+    async def _boom():
+        raise ConnectionError("connection refused")
+
+    broken.ping = _boom
+    mock_from_url.return_value = broken
+
+    r = client.get("/health/ready")
+    assert r.status_code == 503

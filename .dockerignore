@@ -1,0 +1,28 @@
+# Secrets — never bake into the image
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+
+# Python caches / virtualenvs
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime / data artifacts
+images/
+backups/
+insertData/
+scratch/
+
+# Local tooling
+*.log
+.DS_Store

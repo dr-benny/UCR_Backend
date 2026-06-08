@@ -344,23 +344,30 @@ async def job_status_ws(job_id: str, websocket: WebSocket) -> None:
     await websocket.accept()
 
     redis = aioredis.from_url(settings.REDIS_URL)
+
+    # Subscribe BEFORE reading state. Otherwise a "done" event published in
+    # the window between get_state and subscribe would be missed, leaving the
+    # client blocked on listen() forever for a job that already finished.
+    pubsub = redis.pubsub()
+    channel = JOB_CHANNEL.format(job_id=job_id)
+    await pubsub.subscribe(channel)
+
     state = await get_state(redis, job_id)
 
     if not state:
+        await pubsub.unsubscribe(channel)
         await websocket.close(code=4004, reason="Job not found")
         await redis.aclose()
         return
 
     await websocket.send_json(_to_response(job_id, state).model_dump())
 
+    # Terminal already — any buffered event is redundant, close immediately.
     if state.get("status") in ("done", "failed"):
+        await pubsub.unsubscribe(channel)
         await websocket.close()
         await redis.aclose()
         return
-
-    pubsub = redis.pubsub()
-    channel = JOB_CHANNEL.format(job_id=job_id)
-    await pubsub.subscribe(channel)
 
     try:
         async for message in pubsub.listen():

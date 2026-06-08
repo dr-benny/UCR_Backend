@@ -17,6 +17,10 @@ class Settings(BaseSettings):
 
     REDIS_URL: str = "redis://localhost:6379"
 
+    # Comma-separated allowed origins, or "*" for any (dev only).
+    # Note: "*" forces allow_credentials=False — the combination is invalid per CORS spec.
+    CORS_ORIGINS: str = "*"
+
     MAX_IMAGE_BYTES: int = 20 * 1024 * 1024  # 20 MB per image
     SUBMIT_RATE_LIMIT: int = 10  # max job submissions per IP per minute
 

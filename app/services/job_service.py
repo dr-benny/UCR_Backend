@@ -9,7 +9,7 @@ import redis.asyncio as aioredis
 
 from app.core.config import settings
 from app.services.analysis_service import analyze_image_file
-from app.services.job_store import get_state, publish_event, set_state
+from app.services.job_store import publish_event, update_state
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ async def _run_image_job(job_id: str, request: dict[str, Any]) -> None:
         concurrency = int(request.get("concurrency") or 5)
         total = len(images)
 
-        await set_state(redis, job_id, {"status": "processing", "progress": _prog(0, total), "_images": images})
+        await update_state(redis, job_id, {"status": "processing", "progress": _prog(0, total), "_images": images})
         await publish_event(redis, job_id, {"status": "processing", "progress": _prog(0, total)})
         logger.info("Job %s started — %d images, engine=%s model=%s", job_id, total, engine, model)
 
@@ -85,7 +85,7 @@ async def _run_image_job(job_id: str, request: dict[str, Any]) -> None:
         await asyncio.gather(*[_process_one(i, img) for i, img in enumerate(images)])
 
         final_prog = _prog(total, total, [], last_completed)
-        await set_state(redis, job_id, {
+        await update_state(redis, job_id, {
             "status": "done",
             "progress": final_prog,
             "results": [r for r in results if r is not None],
@@ -98,7 +98,7 @@ async def _run_image_job(job_id: str, request: dict[str, Any]) -> None:
     except Exception as exc:
         logger.exception("Job %s crashed", job_id)
         try:
-            await set_state(redis, job_id, {"status": "failed", "error": str(exc), "_images": images})
+            await update_state(redis, job_id, {"status": "failed", "error": str(exc), "_images": images})
             await publish_event(redis, job_id, {"status": "failed", "error": str(exc)})
         except Exception:
             logger.exception("Job %s: failed to record failure", job_id)
