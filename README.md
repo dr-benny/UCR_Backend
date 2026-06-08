@@ -74,7 +74,9 @@ celery -A app.worker worker --loglevel=info
 | `TRUST_PROXY` | no | `false` | Read client IP from `X-Forwarded-For` (enable only behind a trusted proxy) |
 | `AI_ENGINE` | no | `gemini` | Default engine (`gemini` or `claude`) |
 | `GEMINI_MODEL` | no | `gemini-2.5-flash` | Default Gemini model |
-| `ANALYSIS_SAMPLES` | no | `3` | Self-consistency sample count (1 = disabled) |
+| `ANALYSIS_SAMPLES` | no | `3` | Default self-consistency sample count (1 = disabled). Override per request with the `samples` form field |
+| `MAX_ANALYSIS_SAMPLES` | no | `5` | Upper bound a caller may request via `samples` |
+| `MAX_JOB_API_CALLS` | no | `1000` | Reject a job whose `images × samples` exceeds this |
 | `AI_MAX_CONCURRENT` | no | `10` | Max concurrent AI API calls |
 | `AI_CALL_TIMEOUT` | no | `120` | Seconds before a single AI call is aborted + retried |
 | `WS_HEARTBEAT_INTERVAL` | no | `30` | WebSocket heartbeat / state re-check interval (s) |

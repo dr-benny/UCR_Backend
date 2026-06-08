@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"
     AI_ENGINE: str = "gemini"
     ANALYSIS_SAMPLES: int = 3
+    MAX_ANALYSIS_SAMPLES: int = 5  # upper bound a caller may request per image (C1)
+    MAX_JOB_API_CALLS: int = 1000  # reject a job whose images × samples exceeds this (C1)
     AI_MAX_CONCURRENT: int = 10
     AI_CALL_TIMEOUT: int = 120  # seconds per AI API call before it's aborted + retried (R3)
 

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from app.core.config import settings
 from app.schemas.job import JobListResponse, JobProgress, JobResponse
 from app.services.ai_engines import get_engine, list_engines
-from app.services.analysis_service import save_image, validate_mime
+from app.services.analysis_service import read_capped, save_image, validate_mime
 from app.services.job_service import cleanup_images
 from app.services.job_store import JOB_CHANNEL, JOB_INDEX, JOB_KEY, JOB_TTL, get_state, set_state
 from app.worker import celery_app
@@ -63,6 +63,7 @@ def _to_response(job_id: str, state: dict, submitted_at: float | None = None) ->
         submitted_at=submitted_at,
         engine=state.get("engine"),
         model=state.get("model"),
+        samples=state.get("samples"),
         results=state.get("results"),
         failed=state.get("failed"),
         error=state.get("error"),
@@ -77,6 +78,7 @@ async def submit_image_job(
     concurrency: int = Form(5, ge=1, le=10),
     engine: str | None = Form(None, description="AI engine name (e.g. 'gemini')"),
     model: str | None = Form(None, description="Model override (e.g. 'gemini-2.5-pro')"),
+    samples: int | None = Form(None, ge=1, description="Self-consistency samples per image (overrides default)"),
 ) -> JobResponse:
     """
     Submit a batch of images for async AI analysis.
@@ -86,6 +88,25 @@ async def submit_image_job(
     """
     if len(files) > 200:
         raise HTTPException(status_code=400, detail="Maximum 200 images per job")
+
+    if samples is not None and samples > settings.MAX_ANALYSIS_SAMPLES:
+        raise HTTPException(
+            status_code=400, detail=f"samples exceeds max of {settings.MAX_ANALYSIS_SAMPLES}"
+        )
+
+    # Cost guard — reject before doing any work if the estimated AI call count
+    # (images × samples) blows the budget (C1).
+    effective_samples = samples or settings.ANALYSIS_SAMPLES
+    estimated_calls = len(files) * effective_samples
+    if estimated_calls > settings.MAX_JOB_API_CALLS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Job would make ~{estimated_calls} AI calls "
+                f"({len(files)} images × {effective_samples} samples), "
+                f"exceeding the limit of {settings.MAX_JOB_API_CALLS}"
+            ),
+        )
 
     # Validate engine/model early before touching any files
     try:
@@ -100,12 +121,13 @@ async def submit_image_job(
             validate_mime(mime)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-        img_bytes = await file.read()
-        if not img_bytes:
-            raise HTTPException(status_code=400, detail=f"File '{file.filename}' is empty")
-        if len(img_bytes) > settings.MAX_IMAGE_BYTES:
+        try:
+            img_bytes = await read_capped(file, settings.MAX_IMAGE_BYTES)
+        except ValueError:
             mb = settings.MAX_IMAGE_BYTES // (1024 * 1024)
             raise HTTPException(status_code=400, detail=f"File '{file.filename}' exceeds {mb} MB limit")
+        if not img_bytes:
+            raise HTTPException(status_code=400, detail=f"File '{file.filename}' is empty")
         path = save_image(img_bytes, file.filename)
         saved.append({"path": path, "filename": file.filename, "mime": mime})
 
@@ -120,6 +142,7 @@ async def submit_image_job(
         "progress": {"current": 0, "total": total, "percent": 0, "active_files": [], "last_completed": None},
         "engine": resolved_engine,
         "model": model,  # None means each engine uses its own default
+        "samples": samples,
         "_images": saved,
         "_heartbeat": submitted_at,  # reaper marks the job failed if no worker refreshes this
     }
@@ -130,7 +153,10 @@ async def submit_image_job(
         await redis.zadd(JOB_INDEX, {job_id: submitted_at})
         result = celery_app.send_task(
             "process_image_job",
-            args=[job_id, {"images": saved, "concurrency": concurrency, "engine": resolved_engine, "model": model}],
+            args=[job_id, {
+                "images": saved, "concurrency": concurrency,
+                "engine": resolved_engine, "model": model, "samples": samples,
+            }],
         )
         initial["_task_id"] = result.id
         await set_state(redis, job_id, initial)
@@ -257,6 +283,7 @@ async def retry_job(
 
         resolved_engine = engine or state.get("engine") or settings.AI_ENGINE
         resolved_model = model or state.get("model")  # None = engine picks its own default
+        resolved_samples = state.get("samples")  # reuse the original sample count
 
         total = len(images)
         new_state: dict[str, Any] = {
@@ -264,6 +291,7 @@ async def retry_job(
             "progress": {"current": 0, "total": total, "percent": 0, "active_files": [], "last_completed": None},
             "engine": resolved_engine,
             "model": resolved_model,
+            "samples": resolved_samples,
             "_images": images,
             "_heartbeat": time.time(),
         }
@@ -271,7 +299,10 @@ async def retry_job(
 
         result = celery_app.send_task(
             "process_image_job",
-            args=[job_id, {"images": images, "engine": resolved_engine, "model": resolved_model}],
+            args=[job_id, {
+                "images": images, "engine": resolved_engine,
+                "model": resolved_model, "samples": resolved_samples,
+            }],
         )
         new_state["_task_id"] = result.id
         await set_state(redis, job_id, new_state)

@@ -39,6 +39,7 @@ async def _run_image_job(job_id: str, request: dict[str, Any]) -> None:
     images: list[dict] = request.get("images") or []
     engine: str | None = request.get("engine")
     model: str | None = request.get("model")
+    samples: int | None = request.get("samples")
 
     try:
         concurrency = int(request.get("concurrency") or 5)
@@ -73,7 +74,8 @@ async def _run_image_job(job_id: str, request: dict[str, Any]) -> None:
 
                 try:
                     ai_result = await analyze_image_file(
-                        item["path"], mime_type=item.get("mime"), engine=engine, model=model
+                        item["path"], mime_type=item.get("mime"),
+                        engine=engine, model=model, samples=samples,
                     )
                     results[idx] = {"index": idx, "filename": filename, "analysis": ai_result}
                 except Exception as exc:

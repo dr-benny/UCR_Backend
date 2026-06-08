@@ -142,6 +142,31 @@ def test_submit_too_many_files_returns_400(mock_from_url, client):
 
 
 @patch("app.api.v1.jobs.aioredis.from_url")
+def test_submit_rejects_excessive_samples(mock_from_url, client):
+    mock_from_url.return_value = _InMemoryRedis()
+    r = client.post(
+        "/api/jobs/images",
+        data={"samples": "99"},
+        files=[("files", ("a.jpg", BytesIO(b"b"), "image/jpeg"))],
+    )
+    assert r.status_code == 400
+    assert "max" in r.json()["detail"].lower()
+
+
+@patch("app.api.v1.jobs.aioredis.from_url")
+def test_submit_cost_guard_blocks_oversized_job(mock_from_url, client):
+    from app.core.config import settings as cfg
+
+    mock_from_url.return_value = _InMemoryRedis()
+    # 5 files × 5 samples = 25 calls; cap it at 10 so the job is rejected.
+    files = [("files", (f"i{i}.jpg", BytesIO(b"b"), "image/jpeg")) for i in range(5)]
+    with patch.object(cfg, "MAX_JOB_API_CALLS", 10):
+        r = client.post("/api/jobs/images", data={"samples": "5"}, files=files)
+    assert r.status_code == 400
+    assert "exceeding" in r.json()["detail"].lower() or "exceed" in r.json()["detail"].lower()
+
+
+@patch("app.api.v1.jobs.aioredis.from_url")
 def test_submit_empty_file_returns_400(mock_from_url, client):
     mock_from_url.return_value = _InMemoryRedis()
     r = client.post(

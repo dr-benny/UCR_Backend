@@ -20,6 +20,7 @@ class JobResponse(BaseModel):
     submitted_at: Optional[float] = None
     engine: Optional[str] = None
     model: Optional[str] = None
+    samples: Optional[int] = None
     results: Optional[list[dict[str, Any]]] = None
     failed: Optional[list[dict[str, Any]]] = None
     error: Optional[str] = None

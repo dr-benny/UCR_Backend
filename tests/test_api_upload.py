@@ -124,3 +124,54 @@ async def test_analyze_image_file_infers_mime_from_extension():
 
     _, kwargs = fake_engine.analyze_image.call_args
     assert kwargs["mime_type"] == "image/webp"
+
+
+# ── C1: samples param + cap ───────────────────────────────────
+
+@patch("app.api.v1.upload.analyze_image_bytes", return_value=FAKE_ANALYSIS)
+def test_analyze_forwards_samples(mock_analyze, client):
+    r = client.post(
+        "/api/analyze",
+        data={"samples": "2"},
+        files={"file": ("p.jpg", BytesIO(b"bytes"), "image/jpeg")},
+    )
+    assert r.status_code == 200
+    _, kwargs = mock_analyze.call_args
+    assert kwargs["samples"] == 2
+
+
+def test_analyze_rejects_excessive_samples(client):
+    r = client.post(
+        "/api/analyze",
+        data={"samples": "99"},
+        files={"file": ("p.jpg", BytesIO(b"bytes"), "image/jpeg")},
+    )
+    assert r.status_code == 400
+    assert "max" in r.json()["detail"].lower()
+
+
+# ── P2: streaming size-check (read_capped) ────────────────────
+
+async def test_read_capped_accepts_within_limit():
+    from app.services.analysis_service import read_capped
+
+    class _F:
+        def __init__(self, data): self._buf = BytesIO(data)
+        async def read(self, n): return self._buf.read(n)
+
+    data = b"x" * (3 * 1024 * 1024)
+    out = await read_capped(_F(data), 5 * 1024 * 1024)
+    assert out == data
+
+
+async def test_read_capped_aborts_over_limit():
+    import pytest
+    from app.services.analysis_service import read_capped
+
+    class _F:
+        def __init__(self, data): self._buf = BytesIO(data)
+        async def read(self, n): return self._buf.read(n)
+
+    data = b"x" * (6 * 1024 * 1024)
+    with pytest.raises(ValueError):
+        await read_capped(_F(data), 2 * 1024 * 1024)
