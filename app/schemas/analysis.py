@@ -1,8 +1,15 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+
+def _null_if_unknown(v: Any) -> Any:
+    """Coerce 'unknown', empty string, or non-numeric strings to None."""
+    if isinstance(v, str) and (v.strip().lower() in ("unknown", "null", "none", "") or not v.strip()):
+        return None
+    return v
 
 
 class GPSEvidence(BaseModel):
@@ -40,6 +47,11 @@ class MorphologyAnalysis(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     gps_status: str
+
+    @field_validator("latitude", "longitude", mode="before")
+    @classmethod
+    def _coerce_coords(cls, v: Any) -> Any:
+        return _null_if_unknown(v)
     gps_evidence: GPSEvidence
     reference_scale: ReferenceScale
     street_width_m: Optional[float] = None
