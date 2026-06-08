@@ -29,15 +29,18 @@ def save_image(img_bytes: bytes, original_filename: str | None = None) -> str:
     return path
 
 
-async def analyze_image_file(path: str, model_name: str | None = None) -> dict[str, Any]:
-    engine = get_engine(model_name)
-    return await engine.analyze_image(path)
+async def analyze_image_file(
+    path: str,
+    engine: str | None = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    return await get_engine(engine, model).analyze_image(path)
 
 
 async def analyze_image_bytes(
     img_bytes: bytes,
     mime_type: str = "image/jpeg",
-    model_name: str | None = None,
+    engine: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
-    engine = get_engine(model_name)
-    return await engine.analyze_image_bytes(img_bytes, mime_type=mime_type)
+    return await get_engine(engine, model).analyze_image_bytes(img_bytes, mime_type=mime_type)

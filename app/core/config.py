@@ -16,6 +16,9 @@ class Settings(BaseSettings):
 
     REDIS_URL: str = "redis://localhost:6379"
 
+    MAX_IMAGE_BYTES: int = 20 * 1024 * 1024  # 20 MB per image
+    SUBMIT_RATE_LIMIT: int = 10  # max job submissions per IP per minute
+
     model_config = {"env_file": str(BASE_DIR / ".env"), "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
