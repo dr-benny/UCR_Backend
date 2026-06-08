@@ -89,4 +89,4 @@ app.include_router(v1_router)
 
 @app.get("/health", tags=["system"])
 def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "service": "Urban Microclimate Analyzer"}

@@ -274,6 +274,72 @@ async def retry_job(
     return _to_response(job_id, new_state, submitted_at)
 
 
+@router.get("/{job_id}/export")
+async def export_job(
+    job_id: str,
+    format: str = Query("json", description="Export format: json or csv"),
+) -> Response:
+    """Export completed job results as JSON or CSV."""
+    if format not in ("json", "csv"):
+        raise HTTPException(status_code=400, detail=f"Unsupported format '{format}'. Use 'json' or 'csv'")
+
+    redis = aioredis.from_url(settings.REDIS_URL)
+    try:
+        state = await get_state(redis, job_id)
+    finally:
+        await redis.aclose()
+
+    if not state:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if state.get("status") != "done":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job not complete (status: {state.get('status')})",
+        )
+
+    results: list[dict[str, Any]] = state.get("results") or []
+
+    if format == "json":
+        return Response(
+            content=json.dumps({"job_id": job_id, "results": results}, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="job_{job_id[:8]}.json"'},
+        )
+
+    import csv
+    import io
+
+    if not results:
+        return Response(content="", media_type="text/csv")
+
+    rows: list[dict[str, Any]] = []
+    for r in results:
+        analysis = r.get("analysis") or {}
+        row: dict[str, Any] = {
+            "job_id": job_id,
+            "index": r.get("index", ""),
+            "filename": r.get("filename", ""),
+            "scene_description": analysis.get("scene_description", ""),
+        }
+        for cat in ("urban_morphology", "vegetation", "surface_and_flood", "health_livability"):
+            for k, v in (analysis.get(cat) or {}).items():
+                row[f"{cat}_{k}"] = v
+        for k, v in (analysis.get("confidence_scores") or {}).items():
+            row[f"confidence_{k}"] = v
+        rows.append(row)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()), extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="job_{job_id[:8]}.csv"'},
+    )
+
+
 @router.websocket("/{job_id}/ws")
 async def job_status_ws(job_id: str, websocket: WebSocket) -> None:
     await websocket.accept()
