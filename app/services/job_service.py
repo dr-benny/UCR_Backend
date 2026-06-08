@@ -68,7 +68,9 @@ async def _run_image_job(job_id: str, request: dict[str, Any]) -> None:
                 logger.info("Job %s → starting %s (%d/%d)", job_id, filename, counter, total)
 
                 try:
-                    ai_result = await analyze_image_file(item["path"], engine=engine, model=model)
+                    ai_result = await analyze_image_file(
+                        item["path"], mime_type=item.get("mime"), engine=engine, model=model
+                    )
                     results[idx] = {"index": idx, "filename": filename, "analysis": ai_result}
                 except Exception as exc:
                     logger.exception("Job %s image %d failed", job_id, idx)

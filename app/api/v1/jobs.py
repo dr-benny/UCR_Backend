@@ -25,8 +25,18 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────
 
+def _client_ip(request: Request) -> str:
+    """Resolve the real client IP, honoring X-Forwarded-For only behind a trusted proxy."""
+    if settings.TRUST_PROXY:
+        xff = request.headers.get("x-forwarded-for")
+        if xff:
+            # Left-most entry is the original client (proxy appends on the right).
+            return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
 async def _rate_limit(request: Request) -> None:
-    ip = request.client.host if request.client else "unknown"
+    ip = _client_ip(request)
     key = f"ratelimit:submit:{ip}"
     redis = aioredis.from_url(settings.REDIS_URL)
     try:
@@ -97,7 +107,7 @@ async def submit_image_job(
             mb = settings.MAX_IMAGE_BYTES // (1024 * 1024)
             raise HTTPException(status_code=400, detail=f"File '{file.filename}' exceeds {mb} MB limit")
         path = save_image(img_bytes, file.filename)
-        saved.append({"path": path, "filename": file.filename})
+        saved.append({"path": path, "filename": file.filename, "mime": mime})
 
     job_id = str(uuid.uuid4())
     total = len(saved)

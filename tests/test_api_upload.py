@@ -93,3 +93,34 @@ def test_analyze_with_explicit_engine(mock_analyze, client):
     )
     assert r.status_code == 200
     mock_analyze.assert_called_once()
+
+
+# ── B1: mime is threaded, not hardcoded ───────────────────────
+
+async def test_analyze_image_file_passes_real_mime():
+    """analyze_image_file must forward the file's mime to the engine, not hardcode JPEG."""
+    from unittest.mock import AsyncMock, patch as p
+    from app.services import analysis_service
+
+    fake_engine = AsyncMock()
+    fake_engine.analyze_image = AsyncMock(return_value={})
+    with p.object(analysis_service, "get_engine", return_value=fake_engine):
+        await analysis_service.analyze_image_file("/tmp/test_images/pic.png", mime_type="image/png")
+
+    fake_engine.analyze_image.assert_awaited_once()
+    _, kwargs = fake_engine.analyze_image.call_args
+    assert kwargs["mime_type"] == "image/png"
+
+
+async def test_analyze_image_file_infers_mime_from_extension():
+    """When mime is missing (old jobs), infer it from the file extension."""
+    from unittest.mock import AsyncMock, patch as p
+    from app.services import analysis_service
+
+    fake_engine = AsyncMock()
+    fake_engine.analyze_image = AsyncMock(return_value={})
+    with p.object(analysis_service, "get_engine", return_value=fake_engine):
+        await analysis_service.analyze_image_file("/tmp/test_images/pic.webp")
+
+    _, kwargs = fake_engine.analyze_image.call_args
+    assert kwargs["mime_type"] == "image/webp"

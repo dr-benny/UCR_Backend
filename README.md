@@ -36,6 +36,10 @@ Self-consistency sampling (`ANALYSIS_SAMPLES > 1`) runs N parallel API calls and
 | `GET` | `/api/jobs/{id}/export` | Export results as `?format=json` or `?format=csv` |
 | `WS` | `/api/jobs/{id}/ws` | Real-time progress stream |
 
+When `API_KEY` is set, every route above except `/health*` and `/api/engines`
+requires the key. HTTP clients send `Authorization: Bearer <key>`; WebSocket
+clients pass `?token=<key>` (browsers can't set headers on the WS handshake).
+
 ## Setup
 
 ```bash
@@ -65,6 +69,9 @@ celery -A app.worker worker --loglevel=info
 | `GEMINI_API_KEY` | yes | — | Google Gemini API key |
 | `ANTHROPIC_API_KEY` | no | — | Anthropic Claude API key (required to use `engine=claude`) |
 | `REDIS_URL` | no | `redis://localhost:6379` | Redis connection URL |
+| `API_KEY` | no | — | When set, `/api/analyze` + `/api/jobs` require it (`Authorization: Bearer <key>`, or `?token=` for WebSocket). Unset = auth disabled |
+| `CORS_ORIGINS` | no | `*` | Comma-separated allowed origins. `*` auto-disables credentials |
+| `TRUST_PROXY` | no | `false` | Read client IP from `X-Forwarded-For` (enable only behind a trusted proxy) |
 | `AI_ENGINE` | no | `gemini` | Default engine (`gemini` or `claude`) |
 | `GEMINI_MODEL` | no | `gemini-2.5-flash` | Default Gemini model |
 | `ANALYSIS_SAMPLES` | no | `3` | Self-consistency sample count (1 = disabled) |

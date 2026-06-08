@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 import os
 import uuid
 from typing import Any
@@ -31,10 +32,14 @@ def save_image(img_bytes: bytes, original_filename: str | None = None) -> str:
 
 async def analyze_image_file(
     path: str,
+    mime_type: str | None = None,
     engine: str | None = None,
     model: str | None = None,
 ) -> dict[str, Any]:
-    return await get_engine(engine, model).analyze_image(path)
+    # Fall back to the file extension (e.g. old jobs saved before mime was
+    # tracked), then to JPEG. Never hardcode — Claude rejects mismatched media_type.
+    mt = mime_type or mimetypes.guess_type(path)[0] or "image/jpeg"
+    return await get_engine(engine, model).analyze_image(path, mime_type=mt)
 
 
 async def analyze_image_bytes(

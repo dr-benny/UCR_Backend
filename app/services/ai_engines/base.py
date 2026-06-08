@@ -62,11 +62,12 @@ class BaseAIEngine(ABC):
     async def analyze_image(
         self,
         image_path: str,
+        mime_type: str = "image/jpeg",
         samples: int | None = None,
     ) -> dict[str, Any]:
-        """Read a local image file and analyze it."""
+        """Read a local image file and analyze it. mime_type must match the file bytes."""
         img_bytes = Path(image_path).read_bytes()
-        return await self.analyze_image_bytes(img_bytes, mime_type="image/jpeg", samples=samples)
+        return await self.analyze_image_bytes(img_bytes, mime_type=mime_type, samples=samples)
 
     async def analyze_image_bytes(
         self,

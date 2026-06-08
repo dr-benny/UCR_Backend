@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     # Note: "*" forces allow_credentials=False — the combination is invalid per CORS spec.
     CORS_ORIGINS: str = "*"
 
+    # Auth — when set, all /api/analyze and /api/jobs routes require this key
+    # via `Authorization: Bearer <key>` (HTTP) or `?token=<key>` (WebSocket).
+    # Leave unset to disable auth (dev only).
+    API_KEY: str | None = None
+
+    # Trust X-Forwarded-For for client IP (enable ONLY behind a proxy/LB you
+    # control — otherwise clients can spoof the header to bypass rate limiting).
+    TRUST_PROXY: bool = False
+
     MAX_IMAGE_BYTES: int = 20 * 1024 * 1024  # 20 MB per image
     SUBMIT_RATE_LIMIT: int = 10  # max job submissions per IP per minute
 
