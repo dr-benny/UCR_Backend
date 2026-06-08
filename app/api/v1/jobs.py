@@ -121,6 +121,7 @@ async def submit_image_job(
         "engine": resolved_engine,
         "model": model,  # None means each engine uses its own default
         "_images": saved,
+        "_heartbeat": submitted_at,  # reaper marks the job failed if no worker refreshes this
     }
 
     redis = aioredis.from_url(settings.REDIS_URL)
@@ -264,6 +265,7 @@ async def retry_job(
             "engine": resolved_engine,
             "model": resolved_model,
             "_images": images,
+            "_heartbeat": time.time(),
         }
         await set_state(redis, job_id, new_state)
 
@@ -380,9 +382,25 @@ async def job_status_ws(job_id: str, websocket: WebSocket) -> None:
         return
 
     try:
-        async for message in pubsub.listen():
-            if message["type"] != "message":
+        while True:
+            # Wait up to one heartbeat interval for the next event. On timeout
+            # (get_message returns None) we re-read state so a job killed by the
+            # reaper or a dead worker is detected, then ping to keep the socket
+            # alive — never block indefinitely on a stalled job (R2).
+            message = await pubsub.get_message(
+                ignore_subscribe_messages=True,
+                timeout=settings.WS_HEARTBEAT_INTERVAL,
+            )
+            if message is None:
+                current = await get_state(redis, job_id)
+                if not current:
+                    break
+                if current.get("status") in ("done", "failed"):
+                    await websocket.send_json(_to_response(job_id, current).model_dump())
+                    break
+                await websocket.send_json({"id": job_id, "type": "heartbeat"})
                 continue
+
             payload = json.loads(message["data"])
             await websocket.send_json({"id": job_id, **payload})
             if payload.get("status") in ("done", "failed"):

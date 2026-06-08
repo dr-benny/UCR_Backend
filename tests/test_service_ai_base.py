@@ -1,9 +1,11 @@
 """
-Unit tests for BaseAIEngine._extract_json.
-
-This is a pure static method with no external dependencies.
+Unit tests for BaseAIEngine._extract_json and the AI-call timeout (R3).
 """
+import asyncio
+
 import pytest
+
+from app.services.ai_engines import base as ai_base
 from app.services.ai_engines.base import BaseAIEngine
 
 
@@ -84,3 +86,32 @@ def test_preserves_nested_structure():
     result = extract(json.dumps(data))
     assert result["urban_morphology"]["sky_view_factor"] == 0.7
     assert "trees" in result["observed_features"]
+
+
+# ── R3: AI-call timeout ───────────────────────────────────────
+
+class _SlowEngine(BaseAIEngine):
+    name = "slow"
+
+    async def _call_api(self, img_bytes, mime_type, temperature=None):
+        await asyncio.sleep(5)  # longer than the patched timeout
+        return "{}"
+
+
+class _FastEngine(BaseAIEngine):
+    name = "fast"
+
+    async def _call_api(self, img_bytes, mime_type, temperature=None):
+        return '{"ok": true}'
+
+
+async def test_call_with_timeout_raises_on_slow_provider(monkeypatch):
+    monkeypatch.setattr(ai_base.settings, "AI_CALL_TIMEOUT", 0.05)
+    with pytest.raises(asyncio.TimeoutError):
+        await _SlowEngine()._call_with_timeout(b"x", "image/jpeg")
+
+
+async def test_call_with_timeout_passes_through_fast_provider(monkeypatch):
+    monkeypatch.setattr(ai_base.settings, "AI_CALL_TIMEOUT", 5)
+    result = await _FastEngine()._call_with_timeout(b"x", "image/jpeg")
+    assert result == '{"ok": true}'

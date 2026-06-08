@@ -63,6 +63,12 @@ class _InMemoryRedis:
     async def keys(self, *_):
         return list(self._store.keys())
 
+    async def scan_iter(self, match=None, count=None):
+        import fnmatch
+        for k in list(self._store.keys()):
+            if match is None or fnmatch.fnmatch(k, match):
+                yield k
+
     async def publish(self, *_): pass
 
     async def ping(self): return True
@@ -393,3 +399,57 @@ def test_readiness_redis_down_returns_503(mock_from_url, client):
 
     r = client.get("/health/ready")
     assert r.status_code == 503
+
+
+# ── R1: stuck-job reaper ──────────────────────────────────────
+
+@patch("app.main.aioredis.from_url")
+async def test_reaper_marks_stalled_job_failed(mock_from_url):
+    import time as _t
+    from app.main import _reap_stuck_jobs
+
+    redis = _InMemoryRedis()
+    stale = _job_state("processing")
+    stale["_heartbeat"] = _t.time() - 9999  # way past STUCK_JOB_TIMEOUT
+    redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(stale)
+    mock_from_url.return_value = redis
+
+    await _reap_stuck_jobs()
+
+    result = json.loads(redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)])
+    assert result["status"] == "failed"
+    assert "stalled" in result["error"].lower()
+
+
+@patch("app.main.aioredis.from_url")
+async def test_reaper_leaves_fresh_job_alone(mock_from_url):
+    import time as _t
+    from app.main import _reap_stuck_jobs
+
+    redis = _InMemoryRedis()
+    fresh = _job_state("processing")
+    fresh["_heartbeat"] = _t.time()  # just beat
+    redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(fresh)
+    mock_from_url.return_value = redis
+
+    await _reap_stuck_jobs()
+
+    result = json.loads(redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)])
+    assert result["status"] == "processing"  # untouched
+
+
+@patch("app.main.aioredis.from_url")
+async def test_reaper_ignores_done_job(mock_from_url):
+    import time as _t
+    from app.main import _reap_stuck_jobs
+
+    redis = _InMemoryRedis()
+    done = _done_state()
+    done["_heartbeat"] = _t.time() - 9999  # old, but already terminal
+    redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(done)
+    mock_from_url.return_value = redis
+
+    await _reap_stuck_jobs()
+
+    result = json.loads(redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)])
+    assert result["status"] == "done"  # not flipped to failed

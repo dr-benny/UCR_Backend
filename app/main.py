@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as v1_router
 from app.core.config import settings
+from app.services.job_store import JOB_CHANNEL, JOB_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +62,64 @@ async def _cleanup_loop() -> None:
         await _orphaned_image_cleanup()
 
 
+async def _reap_stuck_jobs() -> None:
+    """
+    Mark jobs as failed when their worker has gone silent (R1).
+
+    A job is "stuck" if it is still pending/processing but its _heartbeat
+    (refreshed at submit, at processing start, and after every image) is
+    older than STUCK_JOB_TIMEOUT — i.e. the worker crashed, was killed, or
+    was never picked up. Without this, such jobs sit in "processing" until
+    their 24h TTL expires and any WebSocket client waits forever.
+    """
+    redis = aioredis.from_url(settings.REDIS_URL)
+    try:
+        now = time.time()
+        async for key in redis.scan_iter(match="job:*", count=100):
+            raw = await redis.get(key)
+            if not raw:
+                continue
+            state = json.loads(raw)
+            if state.get("status") not in ("pending", "processing"):
+                continue
+            hb = state.get("_heartbeat")
+            if hb is None or (now - hb) <= settings.STUCK_JOB_TIMEOUT:
+                continue
+
+            key_str = key if isinstance(key, str) else key.decode()
+            job_id = key_str.split("job:", 1)[-1]
+            state["status"] = "failed"
+            state["error"] = "Job stalled — worker stopped responding"
+            await redis.set(key_str, json.dumps(state), ex=JOB_TTL)
+            await redis.publish(
+                JOB_CHANNEL.format(job_id=job_id),
+                json.dumps({"status": "failed", "error": state["error"]}),
+            )
+            logger.warning("Reaped stuck job %s (idle %.0fs)", job_id, now - hb)
+    except Exception:
+        logger.exception("Stuck-job reaper failed")
+    finally:
+        await redis.aclose()
+
+
+async def _reaper_loop() -> None:
+    while True:
+        await asyncio.sleep(settings.STUCK_JOB_REAPER_INTERVAL)
+        await _reap_stuck_jobs()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(_cleanup_loop())
+    tasks = [
+        asyncio.create_task(_cleanup_loop()),
+        asyncio.create_task(_reaper_loop()),
+    ]
     yield
-    task.cancel()
-    with suppress(asyncio.CancelledError):
-        await task
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(

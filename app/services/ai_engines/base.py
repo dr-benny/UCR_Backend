@@ -164,7 +164,26 @@ class BaseAIEngine(ABC):
         ):
             with attempt:
                 async with _get_semaphore():
-                    return await self._call_api(img_bytes, mime_type, temperature)
+                    return await self._call_with_timeout(img_bytes, mime_type, temperature)
+
+    async def _call_with_timeout(
+        self,
+        img_bytes: bytes,
+        mime_type: str,
+        temperature: float | None = None,
+    ) -> str:
+        """
+        Call the provider with a hard timeout (R3).
+
+        A hung provider would otherwise hold its semaphore slot indefinitely
+        and starve every other in-flight analysis. On timeout this raises
+        asyncio.TimeoutError, which _guarded_call treats as a transient
+        failure and retries.
+        """
+        return await asyncio.wait_for(
+            self._call_api(img_bytes, mime_type, temperature),
+            timeout=settings.AI_CALL_TIMEOUT,
+        )
 
     # ── Aggregation ───────────────────────────────────────────
 

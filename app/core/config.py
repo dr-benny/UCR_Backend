@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     AI_ENGINE: str = "gemini"
     ANALYSIS_SAMPLES: int = 3
     AI_MAX_CONCURRENT: int = 10
+    AI_CALL_TIMEOUT: int = 120  # seconds per AI API call before it's aborted + retried (R3)
 
     REDIS_URL: str = "redis://localhost:6379"
 
@@ -32,6 +33,14 @@ class Settings(BaseSettings):
 
     MAX_IMAGE_BYTES: int = 20 * 1024 * 1024  # 20 MB per image
     SUBMIT_RATE_LIMIT: int = 10  # max job submissions per IP per minute
+
+    # WebSocket: send a heartbeat + re-check job state every N seconds so a
+    # client never blocks forever on a stalled job (R2).
+    WS_HEARTBEAT_INTERVAL: int = 30
+    # A pending/processing job whose heartbeat is older than this is considered
+    # stalled (worker crashed / never picked up) and marked failed (R1).
+    STUCK_JOB_TIMEOUT: int = 600
+    STUCK_JOB_REAPER_INTERVAL: int = 60  # how often the reaper scans
 
     model_config = {"env_file": str(BASE_DIR / ".env"), "env_file_encoding": "utf-8", "extra": "ignore"}
 

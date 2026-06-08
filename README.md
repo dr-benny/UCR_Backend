@@ -76,6 +76,10 @@ celery -A app.worker worker --loglevel=info
 | `GEMINI_MODEL` | no | `gemini-2.5-flash` | Default Gemini model |
 | `ANALYSIS_SAMPLES` | no | `3` | Self-consistency sample count (1 = disabled) |
 | `AI_MAX_CONCURRENT` | no | `10` | Max concurrent AI API calls |
+| `AI_CALL_TIMEOUT` | no | `120` | Seconds before a single AI call is aborted + retried |
+| `WS_HEARTBEAT_INTERVAL` | no | `30` | WebSocket heartbeat / state re-check interval (s) |
+| `STUCK_JOB_TIMEOUT` | no | `600` | Idle seconds before a job is reaped as failed |
+| `STUCK_JOB_REAPER_INTERVAL` | no | `60` | How often the reaper scans (s) |
 | `IMAGE_DIR` | no | `images/` | Uploaded image storage directory |
 | `MAX_IMAGE_BYTES` | no | `20971520` | Per-image size limit (20 MB) |
 | `SUBMIT_RATE_LIMIT` | no | `10` | Max job submissions per IP per minute |
