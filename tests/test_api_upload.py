@@ -5,17 +5,13 @@ from io import BytesIO
 from unittest.mock import patch
 
 FAKE_ANALYSIS = {
-    "image_id": "test-img-001",
-    "observation_id": "obs-001",
-    "street_id": "street-001",
-    "point_order": 1,
-    "gps_status": "extracted",
-    "gps_evidence": {"metadata_checked": True},
-    "reference_scale": {"type": "person"},
-    "left": {"boundary_type": "wall"},
-    "right": {"boundary_type": "building"},
-    "street_width_m": 8.0,
-    "confidence_score": 0.85,
+    "scene_description": "A typical urban street with shophouses.",
+    "observed_features": ["trees", "sidewalk", "motorcycle"],
+    "urban_morphology": {"street_width": 8.0, "sky_view_factor": 0.6},
+    "vegetation": {"green_view_index": 0.3, "tree_canopy_coverage": "low"},
+    "surface_and_flood": {"surface_material": "asphalt", "impervious_surface_ratio": 0.9},
+    "health_livability": {"walkability_obstruction": "none"},
+    "confidence_scores": {"urban_morphology": 0.85, "vegetation": 0.8},
 }
 
 
@@ -46,8 +42,8 @@ def test_analyze_success(mock_analyze, client):
         files={"file": ("photo.jpg", BytesIO(b"fake-jpeg-bytes"), "image/jpeg")},
     )
     assert r.status_code == 200
-    assert r.json()["image_id"] == FAKE_ANALYSIS["image_id"]
-    assert r.json()["street_width_m"] == FAKE_ANALYSIS["street_width_m"]
+    assert r.json()["scene_description"] == FAKE_ANALYSIS["scene_description"]
+    assert r.json()["urban_morphology"]["street_width"] == 8.0
     mock_analyze.assert_called_once()
 
 

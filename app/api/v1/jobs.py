@@ -104,13 +104,12 @@ async def submit_image_job(
     submitted_at = time.time()
 
     resolved_engine = engine or settings.AI_ENGINE
-    resolved_model = model or settings.GEMINI_MODEL
 
     initial: dict[str, Any] = {
         "status": "pending",
         "progress": {"current": 0, "total": total, "percent": 0, "active_files": [], "last_completed": None},
         "engine": resolved_engine,
-        "model": resolved_model,
+        "model": model,  # None means each engine uses its own default
         "_images": saved,
     }
 
@@ -120,7 +119,7 @@ async def submit_image_job(
         await redis.zadd(JOB_INDEX, {job_id: submitted_at})
         result = celery_app.send_task(
             "process_image_job",
-            args=[job_id, {"images": saved, "concurrency": concurrency, "engine": engine, "model": model}],
+            args=[job_id, {"images": saved, "concurrency": concurrency, "engine": resolved_engine, "model": model}],
         )
         initial["_task_id"] = result.id
         await set_state(redis, job_id, initial)
@@ -246,7 +245,7 @@ async def retry_job(
             raise HTTPException(status_code=400, detail=f"Image files no longer on disk: {missing}")
 
         resolved_engine = engine or state.get("engine") or settings.AI_ENGINE
-        resolved_model = model or state.get("model") or settings.GEMINI_MODEL
+        resolved_model = model or state.get("model")  # None = engine picks its own default
 
         total = len(images)
         new_state: dict[str, Any] = {
@@ -260,7 +259,7 @@ async def retry_job(
 
         result = celery_app.send_task(
             "process_image_job",
-            args=[job_id, {"images": images, "engine": engine, "model": model}],
+            args=[job_id, {"images": images, "engine": resolved_engine, "model": resolved_model}],
         )
         new_state["_task_id"] = result.id
         await set_state(redis, job_id, new_state)
