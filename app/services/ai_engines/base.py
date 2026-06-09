@@ -83,6 +83,16 @@ class BaseAIEngine(ABC):
         """
         n = samples if samples is not None else settings.ANALYSIS_SAMPLES
 
+        # Self-consistency relies on temperature to diversify samples. If the
+        # model can't vary temperature, N calls return near-identical output —
+        # all cost, no benefit — so collapse to a single call.
+        if n > 1 and not self._supports_sampling():
+            logger.warning(
+                "%s (%s) can't vary temperature — self-consistency adds no diversity; using 1 sample",
+                self.name, getattr(self, "_model_name", "?"),
+            )
+            n = 1
+
         if n <= 1:
             raw = await self._guarded_call(img_bytes, mime_type)
             logger.info("--- %s RAW RESPONSE ---\n%s\n---", self.name.upper(), raw)
@@ -122,6 +132,17 @@ class BaseAIEngine(ABC):
             "Self-consistency: aggregated %d/%d valid samples", len(parsed), n
         )
         return aggregated
+
+    def _supports_sampling(self) -> bool:
+        """
+        Whether self-consistency sampling adds value for this engine/model.
+
+        True when the model can vary `temperature` to diversify samples.
+        Override to return False for models that ignore/reject temperature
+        (e.g. Claude Opus 4.7+), so N samples don't burn N× the cost for
+        near-identical output.
+        """
+        return True
 
     # ── Abstract (each engine implements this) ────────────────
 

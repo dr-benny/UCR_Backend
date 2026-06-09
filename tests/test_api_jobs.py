@@ -8,72 +8,10 @@ from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 from app.services.job_store import JOB_INDEX, JOB_KEY
+from tests._fakes import InMemoryRedis as _InMemoryRedis
 
 FAKE_JOB_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 FAKE_TASK_ID = "task-0000-0000-0000-0000"
-
-
-class _InMemoryRedis:
-    """Minimal async Redis substitute for unit tests."""
-
-    def __init__(self):
-        self._store: dict = {}
-        self._ss: dict = {}
-
-    async def set(self, key, value, ex=None, **_):
-        self._store[key] = value
-
-    async def get(self, key):
-        return self._store.get(key)
-
-    async def delete(self, *keys):
-        for k in keys:
-            self._store.pop(k, None)
-
-    async def incr(self, key):
-        val = int(self._store.get(key, 0)) + 1
-        self._store[key] = val
-        return val
-
-    async def expire(self, *_): pass
-
-    async def zadd(self, name, mapping):
-        ss = self._ss.setdefault(name, {})
-        ss.update(mapping)
-
-    async def zrem(self, name, *members):
-        for m in members:
-            self._ss.get(name, {}).pop(m, None)
-
-    async def zcard(self, name):
-        return len(self._ss.get(name, {}))
-
-    async def zscore(self, name, member):
-        return self._ss.get(name, {}).get(member)
-
-    async def zrevrange(self, name, start, stop, withscores=False):
-        items = sorted(self._ss.get(name, {}).items(), key=lambda x: -x[1])
-        sliced = items[start:] if stop == -1 else items[start:stop + 1]
-        if withscores:
-            return [(k.encode(), v) for k, v in sliced]
-        return [k.encode() for k, _ in sliced]
-
-    async def zremrangebyscore(self, *_): pass
-
-    async def keys(self, *_):
-        return list(self._store.keys())
-
-    async def scan_iter(self, match=None, count=None):
-        import fnmatch
-        for k in list(self._store.keys()):
-            if match is None or fnmatch.fnmatch(k, match):
-                yield k
-
-    async def publish(self, *_): pass
-
-    async def ping(self): return True
-
-    async def aclose(self): pass
 
 
 def _job_state(status="pending"):
@@ -306,6 +244,34 @@ def test_retry_non_failed_job_returns_400(mock_from_url, client):
     assert "failed" in r.json()["detail"].lower()
 
 
+@patch("app.api.v1.jobs.celery_app.send_task")
+@patch("app.api.v1.jobs.aioredis.from_url")
+def test_retry_preserves_original_concurrency(mock_from_url, mock_send_task, client):
+    """A retried job must re-use its original concurrency, not silently fall back to 5."""
+    img_path = "/tmp/test_images/retry_conc.jpg"
+    with open(img_path, "wb") as f:
+        f.write(b"fake-image")
+
+    redis = _InMemoryRedis()
+    state = _job_state("failed")
+    state["_images"] = [{"path": img_path, "filename": "retry_conc.jpg"}]
+    state["concurrency"] = 8
+    redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(state)
+    mock_from_url.return_value = redis
+
+    task = MagicMock()
+    task.id = "new-task-id"
+    mock_send_task.return_value = task
+
+    r = client.post(f"/api/jobs/{FAKE_JOB_ID}/retry")
+    assert r.status_code == 202
+
+    sent_request = mock_send_task.call_args.kwargs["args"][1]
+    assert sent_request["concurrency"] == 8
+
+    os.unlink(img_path)
+
+
 # ── GET /api/jobs/{id}/export ─────────────────────────────────
 
 @patch("app.api.v1.jobs.aioredis.from_url")
@@ -345,6 +311,33 @@ def test_export_csv_columns_include_analysis_fields(mock_from_url, client):
     header = r.text.split("\n")[0]
     assert "urban_morphology_street_width" in header
     assert "confidence_urban_morphology" in header
+
+
+@patch("app.api.v1.jobs.aioredis.from_url")
+def test_export_csv_unions_heterogeneous_fields(mock_from_url, client):
+    """Columns present on only some rows must still appear — no silent data loss."""
+    redis = _InMemoryRedis()
+    state = _job_state("done")
+    state["results"] = [
+        {"index": 0, "filename": "a.jpg", "analysis": {
+            "scene_description": "A",
+            "urban_morphology": {"street_width": 8.0},
+        }},
+        {"index": 1, "filename": "b.jpg", "analysis": {
+            "scene_description": "B",
+            "urban_morphology": {"street_width": 6.0, "sky_view_factor": 0.5},
+            "vegetation": {"green_view_index": 0.3},
+        }},
+    ]
+    redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(state)
+    mock_from_url.return_value = redis
+
+    r = client.get(f"/api/jobs/{FAKE_JOB_ID}/export?format=csv")
+    assert r.status_code == 200
+    header = r.text.split("\n")[0]
+    # Fields that appear only on the second row must still be columns.
+    assert "urban_morphology_sky_view_factor" in header
+    assert "vegetation_green_view_index" in header
 
 
 @patch("app.api.v1.jobs.aioredis.from_url")

@@ -27,6 +27,10 @@ class ClaudeEngine(BaseAIEngine):
         self._model_name = model or "claude-opus-4-8"
         self._client = anthropic.AsyncAnthropic()
 
+    def _supports_sampling(self) -> bool:
+        # Models that reject/ignore temperature gain nothing from N samples.
+        return self._model_name in _TEMPERATURE_SUPPORTED
+
     async def _call_api(
         self,
         img_bytes: bytes,

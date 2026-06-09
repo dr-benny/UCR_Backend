@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 
 from app.core.config import settings
 from app.schemas.job import JobListResponse, JobProgress, JobResponse
-from app.services.ai_engines import get_engine, list_engines
+from app.services.ai_engines import get_engine
 from app.services.analysis_service import read_capped, save_image, validate_mime
 from app.services.job_service import cleanup_images
 from app.services.job_store import JOB_CHANNEL, JOB_INDEX, JOB_KEY, JOB_TTL, get_state, set_state
@@ -143,6 +143,7 @@ async def submit_image_job(
         "engine": resolved_engine,
         "model": model,  # None means each engine uses its own default
         "samples": samples,
+        "concurrency": concurrency,  # persisted so retry reuses the original setting
         "_images": saved,
         "_heartbeat": submitted_at,  # reaper marks the job failed if no worker refreshes this
     }
@@ -284,6 +285,7 @@ async def retry_job(
         resolved_engine = engine or state.get("engine") or settings.AI_ENGINE
         resolved_model = model or state.get("model")  # None = engine picks its own default
         resolved_samples = state.get("samples")  # reuse the original sample count
+        resolved_concurrency = state.get("concurrency") or 5  # reuse the original concurrency
 
         total = len(images)
         new_state: dict[str, Any] = {
@@ -292,6 +294,7 @@ async def retry_job(
             "engine": resolved_engine,
             "model": resolved_model,
             "samples": resolved_samples,
+            "concurrency": resolved_concurrency,
             "_images": images,
             "_heartbeat": time.time(),
         }
@@ -300,8 +303,9 @@ async def retry_job(
         result = celery_app.send_task(
             "process_image_job",
             args=[job_id, {
-                "images": images, "engine": resolved_engine,
-                "model": resolved_model, "samples": resolved_samples,
+                "images": images, "concurrency": resolved_concurrency,
+                "engine": resolved_engine, "model": resolved_model,
+                "samples": resolved_samples,
             }],
         )
         new_state["_task_id"] = result.id
@@ -370,8 +374,18 @@ async def export_job(
             row[f"confidence_{k}"] = v
         rows.append(row)
 
+    # Union every row's keys (preserving first-seen order) so heterogeneous
+    # results — e.g. one image missing a category — don't silently lose columns.
+    fieldnames: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for k in row:
+            if k not in seen:
+                seen.add(k)
+                fieldnames.append(k)
+
     output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()), extrasaction="ignore")
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(rows)
 

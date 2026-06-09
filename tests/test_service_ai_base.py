@@ -115,3 +115,33 @@ async def test_call_with_timeout_passes_through_fast_provider(monkeypatch):
     monkeypatch.setattr(ai_base.settings, "AI_CALL_TIMEOUT", 5)
     result = await _FastEngine()._call_with_timeout(b"x", "image/jpeg")
     assert result == '{"ok": true}'
+
+
+# ── B4: skip multi-sampling when the model can't vary temperature ─
+
+class _CountingEngine(BaseAIEngine):
+    name = "counting"
+
+    def __init__(self, supports: bool) -> None:
+        self._supports = supports
+        self.calls = 0
+
+    def _supports_sampling(self) -> bool:
+        return self._supports
+
+    async def _call_api(self, img_bytes, mime_type, temperature=None):
+        self.calls += 1
+        return '{"urban_morphology": {"street_width": 8.0}}'
+
+
+async def test_sampling_collapses_to_one_when_unsupported():
+    """samples=5 on a model that ignores temperature should make ONE call, not five."""
+    engine = _CountingEngine(supports=False)
+    await engine.analyze_image_bytes(b"x", "image/jpeg", samples=5)
+    assert engine.calls == 1
+
+
+async def test_sampling_runs_n_when_supported():
+    engine = _CountingEngine(supports=True)
+    await engine.analyze_image_bytes(b"x", "image/jpeg", samples=5)
+    assert engine.calls == 5

@@ -77,7 +77,13 @@ async def _run_image_job(job_id: str, request: dict[str, Any]) -> None:
                         item["path"], mime_type=item.get("mime"),
                         engine=engine, model=model, samples=samples,
                     )
-                    results[idx] = {"index": idx, "filename": filename, "analysis": ai_result}
+                    if ai_result.get("_parse_error"):
+                        # AI returned text we couldn't parse into JSON — count it as
+                        # a failure instead of storing the garbage as a real result.
+                        failed.append({"index": idx, "filename": filename,
+                                       "reason": "AI returned unparseable output"})
+                    else:
+                        results[idx] = {"index": idx, "filename": filename, "analysis": ai_result}
                 except Exception as exc:
                     logger.exception("Job %s image %d failed", job_id, idx)
                     failed.append({"index": idx, "filename": filename, "reason": str(exc)})
