@@ -10,7 +10,7 @@ from app.services.job_store import JOB_KEY
 from tests._fakes import InMemoryRedis
 
 
-@patch("app.main.aioredis.from_url")
+@patch("app.main.get_redis")
 async def test_cleanup_deletes_unreferenced_images(mock_from_url, tmp_path):
     keep = tmp_path / "keep.jpg"
     keep.write_bytes(b"a")
@@ -31,7 +31,7 @@ async def test_cleanup_deletes_unreferenced_images(mock_from_url, tmp_path):
     assert not orphan.exists()    # no job references it → removed
 
 
-@patch("app.main.aioredis.from_url")
+@patch("app.main.get_redis")
 async def test_cleanup_keeps_all_referenced_images(mock_from_url, tmp_path):
     a = tmp_path / "a.jpg"
     a.write_bytes(b"a")
@@ -55,7 +55,7 @@ async def test_cleanup_keeps_all_referenced_images(mock_from_url, tmp_path):
     assert b.exists()
 
 
-@patch("app.main.aioredis.from_url")
+@patch("app.main.get_redis")
 async def test_cleanup_no_images_dir_is_safe(mock_from_url, tmp_path):
     redis = InMemoryRedis()
     mock_from_url.return_value = redis

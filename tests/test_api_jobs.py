@@ -51,7 +51,7 @@ def _done_state():
 
 @patch("app.api.v1.jobs.get_engine")
 @patch("app.api.v1.jobs.celery_app.send_task")
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_submit_job_success(mock_from_url, mock_send_task, mock_get_engine, client):
     mock_from_url.return_value = _InMemoryRedis()
     task = MagicMock()
@@ -70,7 +70,7 @@ def test_submit_job_success(mock_from_url, mock_send_task, mock_get_engine, clie
     mock_send_task.assert_called_once()
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_submit_too_many_files_returns_400(mock_from_url, client):
     mock_from_url.return_value = _InMemoryRedis()
     files = [("files", (f"img{i}.jpg", BytesIO(b"b"), "image/jpeg")) for i in range(201)]
@@ -79,7 +79,7 @@ def test_submit_too_many_files_returns_400(mock_from_url, client):
     assert "200" in r.json()["detail"]
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_submit_rejects_excessive_samples(mock_from_url, client):
     mock_from_url.return_value = _InMemoryRedis()
     r = client.post(
@@ -91,7 +91,7 @@ def test_submit_rejects_excessive_samples(mock_from_url, client):
     assert "max" in r.json()["detail"].lower()
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_submit_cost_guard_blocks_oversized_job(mock_from_url, client):
     from app.core.config import settings as cfg
 
@@ -104,7 +104,7 @@ def test_submit_cost_guard_blocks_oversized_job(mock_from_url, client):
     assert "exceeding" in r.json()["detail"].lower() or "exceed" in r.json()["detail"].lower()
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_submit_empty_file_returns_400(mock_from_url, client):
     mock_from_url.return_value = _InMemoryRedis()
     r = client.post(
@@ -115,7 +115,7 @@ def test_submit_empty_file_returns_400(mock_from_url, client):
     assert "empty" in r.json()["detail"].lower()
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_submit_oversized_file_returns_400(mock_from_url, client):
     mock_from_url.return_value = _InMemoryRedis()
     big = b"x" * (21 * 1024 * 1024)
@@ -129,7 +129,7 @@ def test_submit_oversized_file_returns_400(mock_from_url, client):
 
 # ── GET /api/jobs/{id} ────────────────────────────────────────
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_get_job_found(mock_from_url, client):
     redis = _InMemoryRedis()
     redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(_job_state())
@@ -143,7 +143,7 @@ def test_get_job_found(mock_from_url, client):
     assert data["status"] == "pending"
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_get_job_not_found(mock_from_url, client):
     mock_from_url.return_value = _InMemoryRedis()
     r = client.get(f"/api/jobs/{FAKE_JOB_ID}")
@@ -152,7 +152,7 @@ def test_get_job_not_found(mock_from_url, client):
 
 # ── GET /api/jobs ─────────────────────────────────────────────
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_list_jobs(mock_from_url, client):
     redis = _InMemoryRedis()
     redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(_job_state())
@@ -166,7 +166,7 @@ def test_list_jobs(mock_from_url, client):
     assert any(j["id"] == FAKE_JOB_ID for j in data["jobs"])
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_list_jobs_filter_by_status(mock_from_url, client):
     redis = _InMemoryRedis()
     redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(_job_state("done"))
@@ -180,7 +180,7 @@ def test_list_jobs_filter_by_status(mock_from_url, client):
 
 # ── DELETE /api/jobs/{id} ─────────────────────────────────────
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_delete_job_success(mock_from_url, client):
     redis = _InMemoryRedis()
     state = _job_state(status="processing")
@@ -199,7 +199,7 @@ def test_delete_job_success(mock_from_url, client):
     mock_revoke.assert_called_once_with(FAKE_TASK_ID, terminate=True)
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_delete_job_not_found(mock_from_url, client):
     mock_from_url.return_value = _InMemoryRedis()
     r = client.delete(f"/api/jobs/{FAKE_JOB_ID}")
@@ -209,7 +209,7 @@ def test_delete_job_not_found(mock_from_url, client):
 # ── POST /api/jobs/{id}/retry ─────────────────────────────────
 
 @patch("app.api.v1.jobs.celery_app.send_task")
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_retry_failed_job(mock_from_url, mock_send_task, client):
     img_path = "/tmp/test_images/retry_test.jpg"
     with open(img_path, "wb") as f:
@@ -233,7 +233,7 @@ def test_retry_failed_job(mock_from_url, mock_send_task, client):
     os.unlink(img_path)
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_retry_non_failed_job_returns_400(mock_from_url, client):
     redis = _InMemoryRedis()
     redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(_job_state("pending"))
@@ -245,7 +245,7 @@ def test_retry_non_failed_job_returns_400(mock_from_url, client):
 
 
 @patch("app.api.v1.jobs.celery_app.send_task")
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_retry_preserves_original_concurrency(mock_from_url, mock_send_task, client):
     """A retried job must re-use its original concurrency, not silently fall back to 5."""
     img_path = "/tmp/test_images/retry_conc.jpg"
@@ -274,7 +274,7 @@ def test_retry_preserves_original_concurrency(mock_from_url, mock_send_task, cli
 
 # ── GET /api/jobs/{id}/export ─────────────────────────────────
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_export_json(mock_from_url, client):
     redis = _InMemoryRedis()
     redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(_done_state())
@@ -288,7 +288,7 @@ def test_export_json(mock_from_url, client):
     assert len(data["results"]) == 1
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_export_csv(mock_from_url, client):
     redis = _InMemoryRedis()
     redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(_done_state())
@@ -301,7 +301,7 @@ def test_export_csv(mock_from_url, client):
     assert len(lines) == 2  # header + 1 data row
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_export_csv_columns_include_analysis_fields(mock_from_url, client):
     redis = _InMemoryRedis()
     redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(_done_state())
@@ -313,7 +313,7 @@ def test_export_csv_columns_include_analysis_fields(mock_from_url, client):
     assert "confidence_urban_morphology" in header
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_export_csv_unions_heterogeneous_fields(mock_from_url, client):
     """Columns present on only some rows must still appear — no silent data loss."""
     redis = _InMemoryRedis()
@@ -340,7 +340,7 @@ def test_export_csv_unions_heterogeneous_fields(mock_from_url, client):
     assert "vegetation_green_view_index" in header
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_export_job_not_done_returns_400(mock_from_url, client):
     redis = _InMemoryRedis()
     redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(_job_state("processing"))
@@ -351,14 +351,14 @@ def test_export_job_not_done_returns_400(mock_from_url, client):
     assert "processing" in r.json()["detail"]
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_export_job_not_found(mock_from_url, client):
     mock_from_url.return_value = _InMemoryRedis()
     r = client.get(f"/api/jobs/{FAKE_JOB_ID}/export")
     assert r.status_code == 404
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_export_invalid_format_returns_400(mock_from_url, client):
     redis = _InMemoryRedis()
     redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(_done_state())
@@ -397,7 +397,7 @@ async def test_update_state_preserves_unset_fields():
 
 # ── /health/ready ─────────────────────────────────────────────
 
-@patch("app.main.aioredis.from_url")
+@patch("app.main.get_redis")
 def test_readiness_ok(mock_from_url, client):
     mock_from_url.return_value = _InMemoryRedis()
     r = client.get("/health/ready")
@@ -405,7 +405,7 @@ def test_readiness_ok(mock_from_url, client):
     assert r.json()["redis"] == "ok"
 
 
-@patch("app.main.aioredis.from_url")
+@patch("app.main.get_redis")
 def test_readiness_redis_down_returns_503(mock_from_url, client):
     broken = _InMemoryRedis()
 
@@ -421,7 +421,7 @@ def test_readiness_redis_down_returns_503(mock_from_url, client):
 
 # ── R1: stuck-job reaper ──────────────────────────────────────
 
-@patch("app.main.aioredis.from_url")
+@patch("app.main.get_redis")
 async def test_reaper_marks_stalled_job_failed(mock_from_url):
     import time as _t
     from app.main import _reap_stuck_jobs
@@ -439,7 +439,7 @@ async def test_reaper_marks_stalled_job_failed(mock_from_url):
     assert "stalled" in result["error"].lower()
 
 
-@patch("app.main.aioredis.from_url")
+@patch("app.main.get_redis")
 async def test_reaper_leaves_fresh_job_alone(mock_from_url):
     import time as _t
     from app.main import _reap_stuck_jobs
@@ -456,7 +456,7 @@ async def test_reaper_leaves_fresh_job_alone(mock_from_url):
     assert result["status"] == "processing"  # untouched
 
 
-@patch("app.main.aioredis.from_url")
+@patch("app.main.get_redis")
 async def test_reaper_ignores_done_job(mock_from_url):
     import time as _t
     from app.main import _reap_stuck_jobs

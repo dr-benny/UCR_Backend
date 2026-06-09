@@ -7,13 +7,13 @@ import time
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
-import redis.asyncio as aioredis
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as v1_router
 from app.core.config import settings
 from app.services.job_store import JOB_CHANNEL, JOB_TTL
+from app.services.redis_client import close_redis, get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ async def _orphaned_image_cleanup() -> None:
     Redis state expired before the job was deleted.
     """
     images_dir = Path(settings.IMAGE_DIR)
-    redis = aioredis.from_url(settings.REDIS_URL)
+    redis = get_redis()
     try:
         # SCAN instead of KEYS — KEYS is O(N) and blocks the whole Redis instance.
         referenced: set[str] = set()
@@ -52,8 +52,6 @@ async def _orphaned_image_cleanup() -> None:
             logger.info("Orphaned image cleanup: deleted %d files", deleted)
     except Exception:
         logger.exception("Orphaned image cleanup failed")
-    finally:
-        await redis.aclose()
 
 
 async def _cleanup_loop() -> None:
@@ -72,7 +70,7 @@ async def _reap_stuck_jobs() -> None:
     was never picked up. Without this, such jobs sit in "processing" until
     their 24h TTL expires and any WebSocket client waits forever.
     """
-    redis = aioredis.from_url(settings.REDIS_URL)
+    redis = get_redis()
     try:
         now = time.time()
         async for key in redis.scan_iter(match="job:*", count=100):
@@ -98,8 +96,6 @@ async def _reap_stuck_jobs() -> None:
             logger.warning("Reaped stuck job %s (idle %.0fs)", job_id, now - hb)
     except Exception:
         logger.exception("Stuck-job reaper failed")
-    finally:
-        await redis.aclose()
 
 
 async def _reaper_loop() -> None:
@@ -120,6 +116,7 @@ async def lifespan(app: FastAPI):
     for task in tasks:
         with suppress(asyncio.CancelledError):
             await task
+    await close_redis()
 
 
 app = FastAPI(
@@ -154,11 +151,9 @@ def health_check():
 @app.get("/health/ready", tags=["system"])
 async def readiness_check():
     """Readiness — verifies Redis is reachable. Use this for LB/k8s probes."""
-    redis = aioredis.from_url(settings.REDIS_URL)
+    redis = get_redis()
     try:
         await redis.ping()
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Redis unavailable: {exc}")
-    finally:
-        await redis.aclose()
     return {"status": "ready", "redis": "ok"}

@@ -7,7 +7,6 @@ import time
 import uuid
 from typing import Any
 
-import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 
 from app.core.config import settings
@@ -16,6 +15,7 @@ from app.services.ai_engines import get_engine
 from app.services.analysis_service import read_capped, save_image, validate_mime
 from app.services.job_service import cleanup_images
 from app.services.job_store import JOB_CHANNEL, JOB_INDEX, JOB_KEY, JOB_TTL, get_state, set_state
+from app.services.redis_client import get_redis
 from app.worker import celery_app
 
 logger = logging.getLogger(__name__)
@@ -38,18 +38,15 @@ def _client_ip(request: Request) -> str:
 async def _rate_limit(request: Request) -> None:
     ip = _client_ip(request)
     key = f"ratelimit:submit:{ip}"
-    redis = aioredis.from_url(settings.REDIS_URL)
-    try:
-        count = await redis.incr(key)
-        if count == 1:
-            await redis.expire(key, 60)
-        if count > settings.SUBMIT_RATE_LIMIT:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Rate limit exceeded — max {settings.SUBMIT_RATE_LIMIT} job submissions per minute",
-            )
-    finally:
-        await redis.aclose()
+    redis = get_redis()
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, 60)
+    if count > settings.SUBMIT_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit exceeded — max {settings.SUBMIT_RATE_LIMIT} job submissions per minute",
+        )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -148,21 +145,18 @@ async def submit_image_job(
         "_heartbeat": submitted_at,  # reaper marks the job failed if no worker refreshes this
     }
 
-    redis = aioredis.from_url(settings.REDIS_URL)
-    try:
-        await set_state(redis, job_id, initial)
-        await redis.zadd(JOB_INDEX, {job_id: submitted_at})
-        result = celery_app.send_task(
-            "process_image_job",
-            args=[job_id, {
-                "images": saved, "concurrency": concurrency,
-                "engine": resolved_engine, "model": model, "samples": samples,
-            }],
-        )
-        initial["_task_id"] = result.id
-        await set_state(redis, job_id, initial)
-    finally:
-        await redis.aclose()
+    redis = get_redis()
+    await set_state(redis, job_id, initial)
+    await redis.zadd(JOB_INDEX, {job_id: submitted_at})
+    result = celery_app.send_task(
+        "process_image_job",
+        args=[job_id, {
+            "images": saved, "concurrency": concurrency,
+            "engine": resolved_engine, "model": model, "samples": samples,
+        }],
+    )
+    initial["_task_id"] = result.id
+    await set_state(redis, job_id, initial)
 
     logger.info("Enqueued job %s (%d images, task %s)", job_id, total, result.id)
     return _to_response(job_id, initial, submitted_at)
@@ -175,50 +169,44 @@ async def list_jobs(
     status: str | None = Query(None, description="Filter by status: pending, processing, done, failed"),
 ) -> JobListResponse:
     """List all jobs, newest first. Optionally filter by status."""
-    redis = aioredis.from_url(settings.REDIS_URL)
-    try:
-        # Remove entries older than job TTL — their Redis state is already gone
-        cutoff = time.time() - JOB_TTL
-        await redis.zremrangebyscore(JOB_INDEX, "-inf", cutoff)
+    redis = get_redis()
+    # Remove entries older than job TTL — their Redis state is already gone
+    cutoff = time.time() - JOB_TTL
+    await redis.zremrangebyscore(JOB_INDEX, "-inf", cutoff)
 
-        # Fetch all when filtering by status (can't filter in sorted set)
-        fetch_end = -1 if status else offset + limit - 1
-        entries = await redis.zrevrange(JOB_INDEX, 0 if status else offset, fetch_end, withscores=True)
+    # Fetch all when filtering by status (can't filter in sorted set)
+    fetch_end = -1 if status else offset + limit - 1
+    entries = await redis.zrevrange(JOB_INDEX, 0 if status else offset, fetch_end, withscores=True)
 
-        jobs: list[JobResponse] = []
-        stale: list[str] = []
-        for job_id_bytes, score in entries:
-            job_id = job_id_bytes if isinstance(job_id_bytes, str) else job_id_bytes.decode()
-            state = await get_state(redis, job_id)
-            if not state:
-                stale.append(job_id)
-                continue
-            if status and state.get("status") != status:
-                continue
-            jobs.append(_to_response(job_id, state, submitted_at=score))
+    jobs: list[JobResponse] = []
+    stale: list[str] = []
+    for job_id_bytes, score in entries:
+        job_id = job_id_bytes if isinstance(job_id_bytes, str) else job_id_bytes.decode()
+        state = await get_state(redis, job_id)
+        if not state:
+            stale.append(job_id)
+            continue
+        if status and state.get("status") != status:
+            continue
+        jobs.append(_to_response(job_id, state, submitted_at=score))
 
-        if stale:
-            await redis.zrem(JOB_INDEX, *stale)
+    if stale:
+        await redis.zrem(JOB_INDEX, *stale)
 
-        # Total is always calculated after cleanup for accuracy (#9)
-        total = len(jobs) if status else await redis.zcard(JOB_INDEX)
+    # Total is always calculated after cleanup for accuracy (#9)
+    total = len(jobs) if status else await redis.zcard(JOB_INDEX)
 
-        if status:
-            jobs = jobs[offset: offset + limit]
-    finally:
-        await redis.aclose()
+    if status:
+        jobs = jobs[offset: offset + limit]
 
     return JobListResponse(jobs=jobs, total=total)
 
 
 @router.get("/{job_id}", response_model=JobResponse)
 async def get_job(job_id: str) -> JobResponse:
-    redis = aioredis.from_url(settings.REDIS_URL)
-    try:
-        state = await get_state(redis, job_id)
-        score = await redis.zscore(JOB_INDEX, job_id)
-    finally:
-        await redis.aclose()
+    redis = get_redis()
+    state = await get_state(redis, job_id)
+    score = await redis.zscore(JOB_INDEX, job_id)
 
     if not state:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -228,24 +216,21 @@ async def get_job(job_id: str) -> JobResponse:
 @router.delete("/{job_id}")
 async def delete_job(job_id: str) -> Response:
     """Delete a job, revoke it if still running, and clean up its images."""
-    redis = aioredis.from_url(settings.REDIS_URL)
-    try:
-        state = await get_state(redis, job_id)
-        if not state:
-            raise HTTPException(status_code=404, detail="Job not found")
+    redis = get_redis()
+    state = await get_state(redis, job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Job not found")
 
-        task_id = state.get("_task_id")
-        if task_id and state.get("status") in ("pending", "processing"):
-            celery_app.control.revoke(task_id, terminate=True)
-            logger.info("Revoked task %s for job %s", task_id, job_id)
+    task_id = state.get("_task_id")
+    if task_id and state.get("status") in ("pending", "processing"):
+        celery_app.control.revoke(task_id, terminate=True)
+        logger.info("Revoked task %s for job %s", task_id, job_id)
 
-        cleanup_images(state.get("_images", []))
+    cleanup_images(state.get("_images", []))
 
-        await redis.delete(JOB_KEY.format(job_id=job_id))
-        await redis.zrem(JOB_INDEX, job_id)
-        logger.info("Deleted job %s", job_id)
-    finally:
-        await redis.aclose()
+    await redis.delete(JOB_KEY.format(job_id=job_id))
+    await redis.zrem(JOB_INDEX, job_id)
+    logger.info("Deleted job %s", job_id)
 
     return Response(status_code=204)
 
@@ -263,59 +248,56 @@ async def retry_job(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
-    redis = aioredis.from_url(settings.REDIS_URL)
-    try:
-        state = await get_state(redis, job_id)
-        if not state:
-            raise HTTPException(status_code=404, detail="Job not found")
-        if state.get("status") != "failed":
-            raise HTTPException(
-                status_code=400,
-                detail=f"Only failed jobs can be retried (current: {state.get('status')})",
-            )
-
-        images = state.get("_images", [])
-        if not images:
-            raise HTTPException(status_code=400, detail="No images available to retry")
-
-        missing = [img["filename"] for img in images if not os.path.exists(img["path"])]
-        if missing:
-            raise HTTPException(status_code=400, detail=f"Image files no longer on disk: {missing}")
-
-        resolved_engine = engine or state.get("engine") or settings.AI_ENGINE
-        resolved_model = model or state.get("model")  # None = engine picks its own default
-        resolved_samples = state.get("samples")  # reuse the original sample count
-        resolved_concurrency = state.get("concurrency") or 5  # reuse the original concurrency
-
-        total = len(images)
-        new_state: dict[str, Any] = {
-            "status": "pending",
-            "progress": {"current": 0, "total": total, "percent": 0, "active_files": [], "last_completed": None},
-            "engine": resolved_engine,
-            "model": resolved_model,
-            "samples": resolved_samples,
-            "concurrency": resolved_concurrency,
-            "_images": images,
-            "_heartbeat": time.time(),
-        }
-        await set_state(redis, job_id, new_state)
-
-        result = celery_app.send_task(
-            "process_image_job",
-            args=[job_id, {
-                "images": images, "concurrency": resolved_concurrency,
-                "engine": resolved_engine, "model": resolved_model,
-                "samples": resolved_samples,
-            }],
+    redis = get_redis()
+    state = await get_state(redis, job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if state.get("status") != "failed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only failed jobs can be retried (current: {state.get('status')})",
         )
-        new_state["_task_id"] = result.id
-        await set_state(redis, job_id, new_state)
 
-        submitted_at = time.time()
-        await redis.zadd(JOB_INDEX, {job_id: submitted_at})
-        logger.info("Retrying job %s engine=%s model=%s (task %s)", job_id, resolved_engine, resolved_model, result.id)
-    finally:
-        await redis.aclose()
+    images = state.get("_images", [])
+    if not images:
+        raise HTTPException(status_code=400, detail="No images available to retry")
+
+    missing = [img["filename"] for img in images if not os.path.exists(img["path"])]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Image files no longer on disk: {missing}")
+
+    resolved_engine = engine or state.get("engine") or settings.AI_ENGINE
+    resolved_model = model or state.get("model")  # None = engine picks its own default
+    resolved_samples = state.get("samples")  # reuse the original sample count
+    resolved_concurrency = state.get("concurrency") or 5  # reuse the original concurrency
+
+    total = len(images)
+    new_state: dict[str, Any] = {
+        "status": "pending",
+        "progress": {"current": 0, "total": total, "percent": 0, "active_files": [], "last_completed": None},
+        "engine": resolved_engine,
+        "model": resolved_model,
+        "samples": resolved_samples,
+        "concurrency": resolved_concurrency,
+        "_images": images,
+        "_heartbeat": time.time(),
+    }
+    await set_state(redis, job_id, new_state)
+
+    result = celery_app.send_task(
+        "process_image_job",
+        args=[job_id, {
+            "images": images, "concurrency": resolved_concurrency,
+            "engine": resolved_engine, "model": resolved_model,
+            "samples": resolved_samples,
+        }],
+    )
+    new_state["_task_id"] = result.id
+    await set_state(redis, job_id, new_state)
+
+    submitted_at = time.time()
+    await redis.zadd(JOB_INDEX, {job_id: submitted_at})
+    logger.info("Retrying job %s engine=%s model=%s (task %s)", job_id, resolved_engine, resolved_model, result.id)
 
     return _to_response(job_id, new_state, submitted_at)
 
@@ -329,11 +311,8 @@ async def export_job(
     if format not in ("json", "csv"):
         raise HTTPException(status_code=400, detail=f"Unsupported format '{format}'. Use 'json' or 'csv'")
 
-    redis = aioredis.from_url(settings.REDIS_URL)
-    try:
-        state = await get_state(redis, job_id)
-    finally:
-        await redis.aclose()
+    redis = get_redis()
+    state = await get_state(redis, job_id)
 
     if not state:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -400,7 +379,7 @@ async def export_job(
 async def job_status_ws(job_id: str, websocket: WebSocket) -> None:
     await websocket.accept()
 
-    redis = aioredis.from_url(settings.REDIS_URL)
+    redis = get_redis()
 
     # Subscribe BEFORE reading state. Otherwise a "done" event published in
     # the window between get_state and subscribe would be missed, leaving the
@@ -414,7 +393,7 @@ async def job_status_ws(job_id: str, websocket: WebSocket) -> None:
     if not state:
         await pubsub.unsubscribe(channel)
         await websocket.close(code=4004, reason="Job not found")
-        await redis.aclose()
+        await pubsub.aclose()
         return
 
     await websocket.send_json(_to_response(job_id, state).model_dump())
@@ -423,7 +402,7 @@ async def job_status_ws(job_id: str, websocket: WebSocket) -> None:
     if state.get("status") in ("done", "failed"):
         await pubsub.unsubscribe(channel)
         await websocket.close()
-        await redis.aclose()
+        await pubsub.aclose()
         return
 
     try:
@@ -454,4 +433,4 @@ async def job_status_ws(job_id: str, websocket: WebSocket) -> None:
         logger.info("WebSocket client disconnected from job %s", job_id)
     finally:
         await pubsub.unsubscribe(channel)
-        await redis.aclose()
+        await pubsub.aclose()

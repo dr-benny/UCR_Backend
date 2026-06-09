@@ -34,7 +34,7 @@ def _done_state() -> dict:
     }
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_ws_closes_when_job_missing(mock_from_url, client):
     mock_from_url.return_value = InMemoryRedis()
     with pytest.raises(WebSocketDisconnect) as exc:
@@ -43,7 +43,7 @@ def test_ws_closes_when_job_missing(mock_from_url, client):
     assert exc.value.code == 4004
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_ws_terminal_job_sends_state_then_closes(mock_from_url, client):
     redis = InMemoryRedis()
     redis._store[JOB_KEY.format(job_id=FAKE_JOB_ID)] = json.dumps(_done_state())
@@ -58,7 +58,7 @@ def test_ws_terminal_job_sends_state_then_closes(mock_from_url, client):
             ws.receive_json()
 
 
-@patch("app.api.v1.jobs.aioredis.from_url")
+@patch("app.api.v1.jobs.get_redis")
 def test_ws_detects_completion_on_heartbeat_reread(mock_from_url, client):
     """With no published event, the heartbeat timeout must re-read state and
     notice the job finished (R2) — never block forever on a stalled socket."""

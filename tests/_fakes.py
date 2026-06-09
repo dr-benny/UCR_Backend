@@ -36,6 +36,10 @@ class _FakePubSub:
             return None
         return {"type": "message", "data": data}
 
+    async def aclose(self) -> None:
+        for ch in list(self._channels):
+            await self.unsubscribe(ch)
+
 
 class InMemoryRedis:
     """Minimal async Redis substitute for unit tests."""
