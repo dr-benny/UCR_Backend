@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 
 from app.core.config import settings
 from app.schemas.job import JobListResponse, JobProgress, JobResponse
+from app.services import prompt_store
 from app.services.ai_engines import get_engine
 from app.services.analysis_service import read_capped, save_image, validate_mime
 from app.services.job_service import cleanup_images
@@ -61,10 +62,19 @@ def _to_response(job_id: str, state: dict, submitted_at: float | None = None) ->
         engine=state.get("engine"),
         model=state.get("model"),
         samples=state.get("samples"),
+        prompt_id=state.get("prompt_id"),
         results=state.get("results"),
         failed=state.get("failed"),
         error=state.get("error"),
     )
+
+
+def _resolve_prompt(prompt_id: str | None) -> str | None:
+    """Look up a stored prompt's text, turning an unknown id into a 400."""
+    try:
+        return prompt_store.resolve_text(prompt_id)
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"Unknown prompt_id '{prompt_id}'")
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -76,6 +86,7 @@ async def submit_image_job(
     engine: str | None = Form(None, description="AI engine name (e.g. 'gemini')"),
     model: str | None = Form(None, description="Model override (e.g. 'gemini-2.5-pro')"),
     samples: int | None = Form(None, ge=1, description="Self-consistency samples per image (overrides default)"),
+    prompt_id: str | None = Form(None, description="Stored prompt to use (see /api/prompts); defaults to the built-in"),
 ) -> JobResponse:
     """
     Submit a batch of images for async AI analysis.
@@ -110,6 +121,10 @@ async def submit_image_job(
         get_engine(engine, model)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    # Resolve + snapshot the prompt now, so the job is self-contained and won't
+    # break if the stored prompt is later edited or deleted.
+    prompt_text = _resolve_prompt(prompt_id)
 
     saved: list[dict[str, Any]] = []
     total_bytes = 0
@@ -147,6 +162,8 @@ async def submit_image_job(
         "model": model,  # None means each engine uses its own default
         "samples": samples,
         "concurrency": concurrency,  # persisted so retry reuses the original setting
+        "prompt_id": prompt_id,  # reference, for display
+        "prompt": prompt_text,   # snapshot of the text, what the worker actually uses
         "_images": saved,
         "_heartbeat": submitted_at,  # reaper marks the job failed if no worker refreshes this
     }
@@ -159,6 +176,7 @@ async def submit_image_job(
         args=[job_id, {
             "images": saved, "concurrency": concurrency,
             "engine": resolved_engine, "model": model, "samples": samples,
+            "prompt": prompt_text,
         }],
     )
     initial["_task_id"] = result.id
@@ -276,6 +294,8 @@ async def retry_job(
     resolved_model = model or state.get("model")  # None = engine picks its own default
     resolved_samples = state.get("samples")  # reuse the original sample count
     resolved_concurrency = state.get("concurrency") or 5  # reuse the original concurrency
+    resolved_prompt = state.get("prompt")  # reuse the snapshotted prompt text
+    resolved_prompt_id = state.get("prompt_id")
 
     total = len(images)
     new_state: dict[str, Any] = {
@@ -285,6 +305,8 @@ async def retry_job(
         "model": resolved_model,
         "samples": resolved_samples,
         "concurrency": resolved_concurrency,
+        "prompt_id": resolved_prompt_id,
+        "prompt": resolved_prompt,
         "_images": images,
         "_heartbeat": time.time(),
     }
@@ -295,7 +317,7 @@ async def retry_job(
         args=[job_id, {
             "images": images, "concurrency": resolved_concurrency,
             "engine": resolved_engine, "model": resolved_model,
-            "samples": resolved_samples,
+            "samples": resolved_samples, "prompt": resolved_prompt,
         }],
     )
     new_state["_task_id"] = result.id

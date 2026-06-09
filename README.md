@@ -35,10 +35,28 @@ Self-consistency sampling (`ANALYSIS_SAMPLES > 1`) runs N parallel API calls and
 | `POST` | `/api/jobs/{id}/retry` | Retry a failed job |
 | `GET` | `/api/jobs/{id}/export` | Export results as `?format=json` or `?format=csv` |
 | `WS` | `/api/jobs/{id}/ws` | Real-time progress stream |
+| `POST` | `/api/prompts` | Create a stored prompt (returns id) |
+| `GET` | `/api/prompts` | List stored prompts |
+| `GET` | `/api/prompts/{id}` | Get a stored prompt |
+| `PUT` | `/api/prompts/{id}` | Update a stored prompt |
+| `DELETE` | `/api/prompts/{id}` | Delete a stored prompt |
 
 When `API_KEY` is set, every route above except `/health*` and `/api/engines`
 requires the key. HTTP clients send `Authorization: Bearer <key>`; WebSocket
 clients pass `?token=<key>` (browsers can't set headers on the WS handshake).
+
+### Prompt library
+
+`/api/analyze` and `/api/jobs/images` accept an optional `prompt_id` form field
+to run a **stored** prompt instead of the built-in one. Manage prompts via the
+`/api/prompts` CRUD routes; they're persisted as JSON files under `PROMPT_DIR`
+(durable on disk — no TTL, not in Redis). A job snapshots the prompt text at
+submit time, so editing or deleting a prompt never breaks an in-flight job.
+
+> The downstream CSV export and self-consistency aggregation assume the built-in
+> JSON schema (the four analysis categories + `confidence_scores`). A custom
+> prompt that returns a different shape still works for JSON output, but those
+> two features expect the standard schema.
 
 ## Setup
 
@@ -83,6 +101,8 @@ celery -A app.worker worker --loglevel=info
 | `STUCK_JOB_TIMEOUT` | no | `600` | Idle seconds before a job is reaped as failed |
 | `STUCK_JOB_REAPER_INTERVAL` | no | `60` | How often the reaper scans (s) |
 | `IMAGE_DIR` | no | `images/` | Uploaded image storage directory |
+| `PROMPT_DIR` | no | `prompt_store/` | Durable on-disk store for the prompt library |
+| `MAX_PROMPT_CHARS` | no | `20000` | Max length of a stored prompt's text |
 | `MAX_IMAGE_BYTES` | no | `20971520` | Per-image size limit (20 MB) |
 | `MAX_JOB_TOTAL_BYTES` | no | `1073741824` | Reject a job whose images' combined size exceeds this (1 GB) |
 | `SUBMIT_RATE_LIMIT` | no | `10` | Max job submissions per IP per minute |

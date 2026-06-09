@@ -63,11 +63,12 @@ async def analyze_image_file(
     engine: str | None = None,
     model: str | None = None,
     samples: int | None = None,
+    prompt: str | None = None,
 ) -> dict[str, Any]:
     # Fall back to the file extension (e.g. old jobs saved before mime was
     # tracked), then to JPEG. Never hardcode — Claude rejects mismatched media_type.
     mt = mime_type or mimetypes.guess_type(path)[0] or "image/jpeg"
-    return await get_engine(engine, model).analyze_image(path, mime_type=mt, samples=samples)
+    return await get_engine(engine, model).analyze_image(path, mime_type=mt, samples=samples, prompt=prompt)
 
 
 async def analyze_image_bytes(
@@ -76,7 +77,8 @@ async def analyze_image_bytes(
     engine: str | None = None,
     model: str | None = None,
     samples: int | None = None,
+    prompt: str | None = None,
 ) -> dict[str, Any]:
     return await get_engine(engine, model).analyze_image_bytes(
-        img_bytes, mime_type=mime_type, samples=samples
+        img_bytes, mime_type=mime_type, samples=samples, prompt=prompt
     )

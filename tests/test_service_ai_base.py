@@ -93,7 +93,7 @@ def test_preserves_nested_structure():
 class _SlowEngine(BaseAIEngine):
     name = "slow"
 
-    async def _call_api(self, img_bytes, mime_type, temperature=None):
+    async def _call_api(self, img_bytes, mime_type, temperature=None, prompt=None):
         await asyncio.sleep(5)  # longer than the patched timeout
         return "{}"
 
@@ -101,7 +101,7 @@ class _SlowEngine(BaseAIEngine):
 class _FastEngine(BaseAIEngine):
     name = "fast"
 
-    async def _call_api(self, img_bytes, mime_type, temperature=None):
+    async def _call_api(self, img_bytes, mime_type, temperature=None, prompt=None):
         return '{"ok": true}'
 
 
@@ -129,7 +129,7 @@ class _CountingEngine(BaseAIEngine):
     def _supports_sampling(self) -> bool:
         return self._supports
 
-    async def _call_api(self, img_bytes, mime_type, temperature=None):
+    async def _call_api(self, img_bytes, mime_type, temperature=None, prompt=None):
         self.calls += 1
         return '{"urban_morphology": {"street_width": 8.0}}'
 
@@ -145,3 +145,28 @@ async def test_sampling_runs_n_when_supported():
     engine = _CountingEngine(supports=True)
     await engine.analyze_image_bytes(b"x", "image/jpeg", samples=5)
     assert engine.calls == 5
+
+
+# ── Custom prompt reaches the provider call ───────────────────
+
+class _PromptCapturingEngine(BaseAIEngine):
+    name = "capture"
+
+    def __init__(self) -> None:
+        self.seen_prompt = "<unset>"
+
+    async def _call_api(self, img_bytes, mime_type, temperature=None, prompt=None):
+        self.seen_prompt = prompt
+        return '{"ok": true}'
+
+
+async def test_custom_prompt_reaches_call_api():
+    engine = _PromptCapturingEngine()
+    await engine.analyze_image_bytes(b"x", "image/jpeg", samples=1, prompt="CUSTOM PROMPT")
+    assert engine.seen_prompt == "CUSTOM PROMPT"
+
+
+async def test_no_prompt_passes_none_to_call_api():
+    engine = _PromptCapturingEngine()
+    await engine.analyze_image_bytes(b"x", "image/jpeg", samples=1)
+    assert engine.seen_prompt is None

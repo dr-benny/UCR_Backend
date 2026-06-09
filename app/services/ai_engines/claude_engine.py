@@ -36,6 +36,7 @@ class ClaudeEngine(BaseAIEngine):
         img_bytes: bytes,
         mime_type: str,
         temperature: float | None = None,
+        prompt: str | None = None,
     ) -> str:
         image_data = base64.standard_b64encode(img_bytes).decode("utf-8")
 
@@ -54,7 +55,7 @@ class ClaudeEngine(BaseAIEngine):
                                 "data": image_data,
                             },
                         },
-                        {"type": "text", "text": ANALYSIS_PROMPT},
+                        {"type": "text", "text": prompt or ANALYSIS_PROMPT},
                     ],
                 }
             ],

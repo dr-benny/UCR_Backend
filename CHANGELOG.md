@@ -48,6 +48,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and `.dockerignore` so secrets aren't baked into images (`e89a18f`).
 - **`MAX_JOB_TOTAL_BYTES` guard** — rejects a job whose images' combined size
   exceeds the limit (default 1 GB), so a 200-image batch can't fill the disk.
+- **Prompt library** — `/api/prompts` CRUD stores custom prompts as durable
+  JSON files on disk (`PROMPT_DIR`, no TTL, not in Redis, so they can't be
+  evicted). `/api/analyze` and `/api/jobs/images` take an optional `prompt_id`
+  to run a stored prompt instead of the built-in; threaded through the engine
+  layer (`_call_api(..., prompt=...)`). Jobs snapshot the prompt text at submit,
+  so editing/deleting a prompt never breaks an in-flight job. New knobs:
+  `PROMPT_DIR`, `MAX_PROMPT_CHARS`.
 
 ### Changed
 
@@ -92,9 +99,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Tests
 
-- Grew to **99 passing** — added direct coverage of the worker pipeline
-  (`_run_image_job`), the WebSocket endpoint, and orphaned-image cleanup, plus
-  the export/retry/sampling/size-guard fixes above.
+- Grew to **115 passing** — added direct coverage of the worker pipeline
+  (`_run_image_job`), the WebSocket endpoint, orphaned-image cleanup, the
+  export/retry/sampling/size-guard fixes above, and the prompt library (CRUD,
+  durability, and `prompt_id` threading into `/api/analyze` + jobs).
 
 ---
 

@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.core.config import settings
+from app.services import prompt_store
 from app.services.ai_engines import get_engine
 from app.services.analysis_service import analyze_image_bytes, read_capped, validate_mime
 
@@ -22,12 +23,21 @@ def _validate_samples(samples: int | None) -> None:
         )
 
 
+def _resolve_prompt(prompt_id: str | None) -> str | None:
+    """Look up a stored prompt's text, turning an unknown id into a 400."""
+    try:
+        return prompt_store.resolve_text(prompt_id)
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"Unknown prompt_id '{prompt_id}'")
+
+
 @router.post("/analyze")
 async def analyze_single(
     file: UploadFile = File(..., description="Street-level image (JPEG/PNG/WebP)"),
     engine: str | None = Form(None, description="AI engine name (e.g. 'gemini')"),
     model: str | None = Form(None, description="Model override (e.g. 'gemini-2.5-pro')"),
     samples: int | None = Form(None, ge=1, description="Self-consistency samples (overrides default)"),
+    prompt_id: str | None = Form(None, description="Stored prompt to use (see /api/prompts); defaults to the built-in"),
 ) -> dict[str, Any]:
     """Analyze a single image synchronously — returns AI result immediately."""
     if engine or model:
@@ -37,6 +47,8 @@ async def analyze_single(
             raise HTTPException(status_code=400, detail=str(exc))
 
     _validate_samples(samples)
+
+    prompt_text = _resolve_prompt(prompt_id)
 
     mime = file.content_type or "image/jpeg"
     try:
@@ -54,7 +66,7 @@ async def analyze_single(
 
     try:
         return await analyze_image_bytes(
-            img_bytes, mime_type=mime, engine=engine, model=model, samples=samples
+            img_bytes, mime_type=mime, engine=engine, model=model, samples=samples, prompt=prompt_text
         )
     except Exception as exc:
         logger.exception("Analysis failed")

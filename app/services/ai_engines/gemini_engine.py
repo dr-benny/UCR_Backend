@@ -28,14 +28,16 @@ class GeminiEngine(BaseAIEngine):
         img_bytes: bytes,
         mime_type: str,
         temperature: float | None = None,
+        prompt: str | None = None,
     ) -> str:
         temp = temperature if temperature is not None else _DEFAULT_TEMPERATURE
+        text_prompt = prompt or ANALYSIS_PROMPT
         gemini_model = genai.GenerativeModel(self._model_name)
 
         def _sync_call() -> str:
             response = gemini_model.generate_content(
                 [
-                    ANALYSIS_PROMPT,
+                    text_prompt,
                     {"mime_type": mime_type, "data": img_bytes},
                 ],
                 generation_config=genai.GenerationConfig(

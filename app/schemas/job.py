@@ -21,6 +21,7 @@ class JobResponse(BaseModel):
     engine: Optional[str] = None
     model: Optional[str] = None
     samples: Optional[int] = None
+    prompt_id: Optional[str] = None
     results: Optional[list[dict[str, Any]]] = None
     failed: Optional[list[dict[str, Any]]] = None
     error: Optional[str] = None

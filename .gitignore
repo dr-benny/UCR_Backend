@@ -3,6 +3,7 @@ scratch/
 __pycache__/
 *.pyc
 /images/
+/prompt_store/
 .venv/
 .claude/
 .DS_Store

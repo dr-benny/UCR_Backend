@@ -67,16 +67,18 @@ class BaseAIEngine(ABC):
         image_path: str,
         mime_type: str = "image/jpeg",
         samples: int | None = None,
+        prompt: str | None = None,
     ) -> dict[str, Any]:
         """Read a local image file and analyze it. mime_type must match the file bytes."""
         img_bytes = Path(image_path).read_bytes()
-        return await self.analyze_image_bytes(img_bytes, mime_type=mime_type, samples=samples)
+        return await self.analyze_image_bytes(img_bytes, mime_type=mime_type, samples=samples, prompt=prompt)
 
     async def analyze_image_bytes(
         self,
         img_bytes: bytes,
         mime_type: str = "image/jpeg",
         samples: int | None = None,
+        prompt: str | None = None,
     ) -> dict[str, Any]:
         """
         Analyze raw image bytes.
@@ -97,7 +99,7 @@ class BaseAIEngine(ABC):
             n = 1
 
         if n <= 1:
-            raw = await self._guarded_call(img_bytes, mime_type)
+            raw = await self._guarded_call(img_bytes, mime_type, prompt=prompt)
             logger.info("--- %s RAW RESPONSE ---\n%s\n---", self.name.upper(), raw)
             result = self._extract_json(raw)
             logger.info("Parsed JSON keys: %s", list(result.keys()))
@@ -106,7 +108,7 @@ class BaseAIEngine(ABC):
         # ── Multi-sample path ─────────────────────────────────
         logger.info("Self-consistency: requesting %d samples from %s", n, self.name)
         raw_results = await asyncio.gather(
-            *[self._guarded_call(img_bytes, mime_type, temperature=_SAMPLING_TEMPERATURE) for _ in range(n)],
+            *[self._guarded_call(img_bytes, mime_type, temperature=_SAMPLING_TEMPERATURE, prompt=prompt) for _ in range(n)],
             return_exceptions=True,
         )
 
@@ -155,12 +157,14 @@ class BaseAIEngine(ABC):
         img_bytes: bytes,
         mime_type: str,
         temperature: float | None = None,
+        prompt: str | None = None,
     ) -> str:
         """
         Send image bytes to the AI provider and return raw text.
 
         `temperature` overrides the engine default — pass a higher value
         (e.g. 0.7) when drawing diverse samples for self-consistency.
+        `prompt` overrides the built-in ANALYSIS_PROMPT when set.
         """
         ...
 
@@ -169,6 +173,7 @@ class BaseAIEngine(ABC):
         img_bytes: bytes,
         mime_type: str,
         temperature: float | None = None,
+        prompt: str | None = None,
     ) -> str:
         """
         Wrapper around _call_api with global semaphore + automatic retry.
@@ -188,13 +193,14 @@ class BaseAIEngine(ABC):
         ):
             with attempt:
                 async with _get_semaphore():
-                    return await self._call_with_timeout(img_bytes, mime_type, temperature)
+                    return await self._call_with_timeout(img_bytes, mime_type, temperature, prompt)
 
     async def _call_with_timeout(
         self,
         img_bytes: bytes,
         mime_type: str,
         temperature: float | None = None,
+        prompt: str | None = None,
     ) -> str:
         """
         Call the provider with a hard timeout (R3).
@@ -205,7 +211,7 @@ class BaseAIEngine(ABC):
         failure and retries.
         """
         return await asyncio.wait_for(
-            self._call_api(img_bytes, mime_type, temperature),
+            self._call_api(img_bytes, mime_type, temperature, prompt),
             timeout=settings.AI_CALL_TIMEOUT,
         )
 

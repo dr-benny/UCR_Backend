@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str | None = None
 
     IMAGE_DIR: str = "images"
+    PROMPT_DIR: str = "prompt_store"  # durable on-disk store for custom prompt library
 
     GEMINI_MODEL: str = "gemini-2.5-flash"
     AI_ENGINE: str = "gemini"
@@ -36,6 +37,8 @@ class Settings(BaseSettings):
     MAX_IMAGE_BYTES: int = 20 * 1024 * 1024  # 20 MB per image
     MAX_JOB_TOTAL_BYTES: int = 1024 * 1024 * 1024  # 1 GB total across one job's images (D2)
     SUBMIT_RATE_LIMIT: int = 10  # max job submissions per IP per minute
+
+    MAX_PROMPT_CHARS: int = 20000  # upper bound on a stored custom prompt's length
 
     # WebSocket: send a heartbeat + re-check job state every N seconds so a
     # client never blocks forever on a stalled job (R2).
