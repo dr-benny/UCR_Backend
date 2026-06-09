@@ -66,10 +66,8 @@ async def _run_image_job(job_id: str, request: dict[str, Any]) -> None:
             async with sem:
                 async with lock:
                     active_files[idx] = filename
-                await publish_event(redis, job_id, {
-                    "status": "processing",
-                    "progress": _prog(counter, total, list(active_files.values()), last_completed),
-                })
+                    start_prog = _prog(counter, total, list(active_files.values()), last_completed)
+                await publish_event(redis, job_id, {"status": "processing", "progress": start_prog})
                 logger.info("Job %s → starting %s (%d/%d)", job_id, filename, counter, total)
 
                 try:

@@ -112,6 +112,7 @@ async def submit_image_job(
         raise HTTPException(status_code=400, detail=str(exc))
 
     saved: list[dict[str, Any]] = []
+    total_bytes = 0
     for file in files:
         mime = file.content_type or "image/jpeg"
         try:
@@ -125,6 +126,11 @@ async def submit_image_job(
             raise HTTPException(status_code=400, detail=f"File '{file.filename}' exceeds {mb} MB limit")
         if not img_bytes:
             raise HTTPException(status_code=400, detail=f"File '{file.filename}' is empty")
+        total_bytes += len(img_bytes)
+        if total_bytes > settings.MAX_JOB_TOTAL_BYTES:
+            cleanup_images(saved)  # drop the files already written for this request
+            mb = settings.MAX_JOB_TOTAL_BYTES // (1024 * 1024)
+            raise HTTPException(status_code=400, detail=f"Job exceeds total size limit of {mb} MB")
         path = save_image(img_bytes, file.filename)
         saved.append({"path": path, "filename": file.filename, "mime": mime})
 

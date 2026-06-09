@@ -121,7 +121,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Urban Microclimate Analyzer",
-    description="Extracts walkway geometry, shade, and heat-risk data from Street View images using Gemini Vision AI.",
+    description="Extracts walkway geometry, shade, and heat-risk indicators from uploaded street-level images using pluggable AI vision engines (Gemini, Claude).",
     version="2.0.0",
     lifespan=lifespan,
 )

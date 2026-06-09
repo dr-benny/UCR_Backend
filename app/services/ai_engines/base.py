@@ -33,10 +33,13 @@ logger = logging.getLogger(__name__)
 # Temperature used when drawing diverse samples for self-consistency
 _SAMPLING_TEMPERATURE = 0.7
 
-# Global semaphore — shared across ALL engines and ALL callers (batch + sampling).
-# Lazy-init on first use so it's always created inside a running event loop.
-# asyncio.Semaphore must be created on the loop that will use it, and at import
-# time there may be no loop yet (e.g. during test collection).
+# Concurrency cap shared across ALL engines and callers (batch + sampling)
+# WITHIN ONE PROCESS. Note: under Celery prefork each worker process has its
+# own, so real provider-side concurrency is up to
+# (worker processes + 1 API process) × AI_MAX_CONCURRENT — size it accordingly
+# (see README). Lazy-init on first use so it's always created inside a running
+# event loop (asyncio.Semaphore binds to the loop that creates it, and at import
+# time there may be no loop yet, e.g. during test collection).
 _api_semaphore: asyncio.Semaphore | None = None
 
 

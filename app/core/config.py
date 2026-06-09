@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     TRUST_PROXY: bool = False
 
     MAX_IMAGE_BYTES: int = 20 * 1024 * 1024  # 20 MB per image
+    MAX_JOB_TOTAL_BYTES: int = 1024 * 1024 * 1024  # 1 GB total across one job's images (D2)
     SUBMIT_RATE_LIMIT: int = 10  # max job submissions per IP per minute
 
     # WebSocket: send a heartbeat + re-check job state every N seconds so a

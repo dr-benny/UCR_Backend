@@ -127,6 +127,19 @@ def test_submit_oversized_file_returns_400(mock_from_url, client):
     assert "exceed" in r.json()["detail"].lower()
 
 
+@patch("app.api.v1.jobs.get_redis")
+def test_submit_total_size_guard_returns_400(mock_from_url, client):
+    """Files that each pass the per-image cap but together blow the job cap (D2)."""
+    from app.core.config import settings as cfg
+
+    mock_from_url.return_value = _InMemoryRedis()
+    files = [("files", (f"i{i}.jpg", BytesIO(b"x" * 8), "image/jpeg")) for i in range(2)]
+    with patch.object(cfg, "MAX_JOB_TOTAL_BYTES", 10):  # 2×8 = 16 bytes > 10
+        r = client.post("/api/jobs/images", files=files)
+    assert r.status_code == 400
+    assert "total size" in r.json()["detail"].lower()
+
+
 # ── GET /api/jobs/{id} ────────────────────────────────────────
 
 @patch("app.api.v1.jobs.get_redis")

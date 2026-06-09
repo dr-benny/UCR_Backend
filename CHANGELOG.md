@@ -46,6 +46,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Operational safety nets** — AI-call timeout (R3), stuck-job reaper (R1),
   WebSocket heartbeat (R2) (`4e24438`); `/health/ready` Redis readiness probe
   and `.dockerignore` so secrets aren't baked into images (`e89a18f`).
+- **`MAX_JOB_TOTAL_BYTES` guard** — rejects a job whose images' combined size
+  exceeds the limit (default 1 GB), so a 200-image batch can't fill the disk.
 
 ### Changed
 
@@ -60,7 +62,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - New config knobs (all optional, documented in README + `.env.example`):
   `MAX_ANALYSIS_SAMPLES`, `MAX_JOB_API_CALLS`, `AI_CALL_TIMEOUT`,
   `WS_HEARTBEAT_INTERVAL`, `STUCK_JOB_TIMEOUT`, `STUCK_JOB_REAPER_INTERVAL`,
-  `MAX_IMAGE_BYTES`, `SUBMIT_RATE_LIMIT`.
+  `MAX_IMAGE_BYTES`, `SUBMIT_RATE_LIMIT`, `MAX_JOB_TOTAL_BYTES`.
+- **Shared Redis client** — the API process creates one client at startup and
+  reuses it for every request (closed at shutdown), instead of building and
+  tearing down a connection pool per call. The Celery worker keeps a per-task
+  client (each task runs under its own event loop).
+- **Self-consistency skips diversity-less sampling** — collapses to one call
+  for models that can't vary temperature (e.g. Claude Opus 4.7+), avoiding N×
+  cost for near-identical samples.
 
 ### Fixed
 
@@ -72,10 +81,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Engine default-model and request/response schema mismatches (`42056d0`),
   list-response unwrap + `MorphologyAnalysis` DTO (`ad13229`), and `'unknown'`
   latitude/longitude coerced to `null` (`9630be1`).
+- **CSV export unions every result's keys** instead of taking columns from the
+  first row — heterogeneous results no longer silently lose columns.
+- **Unparseable AI output counts as a failed image** instead of being stored as
+  a real `analysis` result, so a job no longer reports `done` with garbage rows.
+- **Retried jobs reuse their original concurrency** (persisted at submit)
+  instead of silently falling back to the default of 5.
+- **Per-image progress is snapshotted under the lock**, removing a benign race
+  on the displayed counter/active-files.
 
 ### Tests
 
-- Suite grew alongside the hardening work to **84 passing**.
+- Grew to **99 passing** — added direct coverage of the worker pipeline
+  (`_run_image_job`), the WebSocket endpoint, and orphaned-image cleanup, plus
+  the export/retry/sampling/size-guard fixes above.
 
 ---
 

@@ -77,13 +77,14 @@ celery -A app.worker worker --loglevel=info
 | `ANALYSIS_SAMPLES` | no | `3` | Default self-consistency sample count (1 = disabled). Override per request with the `samples` form field |
 | `MAX_ANALYSIS_SAMPLES` | no | `5` | Upper bound a caller may request via `samples` |
 | `MAX_JOB_API_CALLS` | no | `1000` | Reject a job whose `images × samples` exceeds this |
-| `AI_MAX_CONCURRENT` | no | `10` | Max concurrent AI API calls |
+| `AI_MAX_CONCURRENT` | no | `10` | Max concurrent AI API calls **per process**. Under Celery prefork the cap is per worker process, so real provider-side concurrency ≈ (workers + 1) × this — size it against your provider's rate limit |
 | `AI_CALL_TIMEOUT` | no | `120` | Seconds before a single AI call is aborted + retried |
 | `WS_HEARTBEAT_INTERVAL` | no | `30` | WebSocket heartbeat / state re-check interval (s) |
 | `STUCK_JOB_TIMEOUT` | no | `600` | Idle seconds before a job is reaped as failed |
 | `STUCK_JOB_REAPER_INTERVAL` | no | `60` | How often the reaper scans (s) |
 | `IMAGE_DIR` | no | `images/` | Uploaded image storage directory |
 | `MAX_IMAGE_BYTES` | no | `20971520` | Per-image size limit (20 MB) |
+| `MAX_JOB_TOTAL_BYTES` | no | `1073741824` | Reject a job whose images' combined size exceeds this (1 GB) |
 | `SUBMIT_RATE_LIMIT` | no | `10` | Max job submissions per IP per minute |
 
 ## Testing
