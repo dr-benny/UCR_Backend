@@ -4,8 +4,5 @@ __pycache__/
 *.pyc
 /images/
 .venv/
-insertData/
-/backups/*
-!/backups/backup_20260420_104611/
 .claude/
 .DS_Store

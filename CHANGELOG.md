@@ -7,6 +7,76 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+> Architecture note: since 0.5.0 the service migrated off PostgreSQL/SQLAlchemy/
+> Alembic and off the Google Street View fetch. Job state now lives entirely in
+> Redis, and the backend ingests uploaded images directly. Entries 0.5.0 and
+> earlier describe the previous (Postgres-backed, Street-View-fed) design and are
+> kept as historical record.
+
+### Removed
+
+- **PostgreSQL / SQLAlchemy / Alembic** (`dd00daa`) — all job and analysis state
+  moved to Redis (`job_store.py`). No relational DB, models layer, or migrations
+  remain. `SessionLocal`, `SurveyRoute`, `StreetAnalysis` ORM models, and the
+  `route_id` FK are gone.
+- **Google Street View integration** (`fa34201`) — the backend no longer fetches
+  panoramas; clients upload street images directly to `/api/analyze` and
+  `/api/jobs/images`.
+
+### Added
+
+- **Redis-backed async job queue** — Celery worker pool processes batch jobs
+  (up to 200 images). Endpoints: `POST /api/jobs/images` (202 + job id),
+  `GET /api/jobs` (list, `?status=` filter), `GET /api/jobs/{id}` (poll),
+  `DELETE /api/jobs/{id}` (cancel + revoke task), `POST /api/jobs/{id}/retry`,
+  `GET /api/jobs/{id}/export` (`?format=json|csv`), and `WS /api/jobs/{id}/ws`
+  (real-time progress) (`e0f87e5`).
+- **Pluggable AI-engine registry** (`aa03290`) — `BaseAIEngine` + `_REGISTRY` in
+  `ai_engines/`. Ships a **Claude** engine alongside Gemini; `GET /api/engines`
+  lists registered engines/models; engine + model selectable per request.
+- **Per-request self-consistency samples + cost guard** (C1, `3b38262`) —
+  optional `samples` form field (capped at `MAX_ANALYSIS_SAMPLES`); jobs whose
+  `images × samples` exceed `MAX_JOB_API_CALLS` are rejected (400) before any
+  file is saved. `samples` is persisted and reused on retry.
+- **KMZ export + sensor-reading model + CSV ingest pipeline** (`3d7456c`),
+  replacing the previous KML export.
+- **API-key auth** (S1, `fb559ab`) — `core/auth.require_api_key` guards
+  `/api/analyze` and all `/api/jobs` routes (Bearer header / `?token=` for WS);
+  no-op when `API_KEY` is unset. `/api/engines` and `/health*` stay public.
+- **Operational safety nets** — AI-call timeout (R3), stuck-job reaper (R1),
+  WebSocket heartbeat (R2) (`4e24438`); `/health/ready` Redis readiness probe
+  and `.dockerignore` so secrets aren't baked into images (`e89a18f`).
+
+### Changed
+
+- **CORS driven by `CORS_ORIGINS`** — wildcard auto-disables credentials
+  (`e89a18f`).
+- **Rate limiting reads real client IP** — `X-Forwarded-For` honored only when
+  `TRUST_PROXY=true`, else the socket peer (S2, `fb559ab`).
+- **Streaming upload size-check** (P2, `3b38262`) — `read_capped()` aborts at
+  `MAX_IMAGE_BYTES` in 1 MB chunks instead of buffering whole files in RAM.
+- **`job_store.update_state()` merges** instead of overwriting, preserving
+  `_task_id`/engine/model written at submit time (`e89a18f`).
+- New config knobs (all optional, documented in README + `.env.example`):
+  `MAX_ANALYSIS_SAMPLES`, `MAX_JOB_API_CALLS`, `AI_CALL_TIMEOUT`,
+  `WS_HEARTBEAT_INTERVAL`, `STUCK_JOB_TIMEOUT`, `STUCK_JOB_REAPER_INTERVAL`,
+  `MAX_IMAGE_BYTES`, `SUBMIT_RATE_LIMIT`.
+
+### Fixed
+
+- **Per-image MIME no longer hardcoded** (B1, `fb559ab`) — the job path threads
+  each image's real MIME type through; previously every batch image was sent as
+  `image/jpeg`, breaking PNG/WebP uploads (Claude rejected, Gemini mis-decoded).
+- **WebSocket race** (`e89a18f`) — the WS subscribes to pub/sub *before* reading
+  state, so a `done` event published in between is no longer missed.
+- Engine default-model and request/response schema mismatches (`42056d0`),
+  list-response unwrap + `MorphologyAnalysis` DTO (`ad13229`), and `'unknown'`
+  latitude/longitude coerced to `null` (`9630be1`).
+
+### Tests
+
+- Suite grew alongside the hardening work to **84 passing**.
+
 ---
 
 ## [0.5.0] — 2026-05-14
