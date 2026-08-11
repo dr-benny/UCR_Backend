@@ -82,6 +82,10 @@ async def _run_image_job(job_id: str, request: dict[str, Any]) -> None:
                         failed.append({"index": idx, "filename": filename,
                                        "reason": "AI returned unparseable output"})
                     else:
+                        ai_result["filename"] = filename
+                        ai_result["_engine"] = engine or settings.AI_ENGINE
+                        ai_result["_model"] = model
+                        ai_result["_prompt_id"] = request.get("prompt_id")
                         results[idx] = {"index": idx, "filename": filename, "analysis": ai_result}
                 except Exception as exc:
                     logger.exception("Job %s image %d failed", job_id, idx)

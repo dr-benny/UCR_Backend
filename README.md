@@ -41,9 +41,28 @@ Self-consistency sampling (`ANALYSIS_SAMPLES > 1`) runs N parallel API calls and
 | `PUT` | `/api/prompts/{id}` | Update a stored prompt |
 | `DELETE` | `/api/prompts/{id}` | Delete a stored prompt |
 
-When `API_KEY` is set, every route above except `/health*` and `/api/engines`
-requires the key. HTTP clients send `Authorization: Bearer <key>`; WebSocket
-clients pass `?token=<key>` (browsers can't set headers on the WS handshake).
+When at least one key exists under `API_KEY_DIR`, every route above except
+`/health*` and `/api/engines` requires a key. HTTP clients send
+`Authorization: Bearer <key>`; WebSocket clients pass `?token=<key>` (browsers
+can't set headers on the WS handshake). No keys on disk = auth disabled.
+
+### API keys & quota
+
+Keys are files under `API_KEY_DIR` (one JSON file per key, durable on disk —
+not Redis), managed with:
+
+```bash
+python scripts/manage_api_keys.py create "client-a" --daily-limit 500
+python scripts/manage_api_keys.py list
+python scripts/manage_api_keys.py revoke <key_id>
+```
+
+`create` prints the secret once — it's also saved in the key's JSON file.
+Each key has a `daily_limit` on AI calls (`images × samples`, counted at
+`/api/analyze` and job submit/retry time); omit `--daily-limit` to fall back
+to `DEFAULT_DAILY_AI_CALL_LIMIT`. Usage resets at 00:00 UTC. A request that
+would exceed the remaining budget is rejected with `429` before any AI call
+is made.
 
 ### Prompt library
 
@@ -87,7 +106,8 @@ celery -A app.worker worker --loglevel=info
 | `GEMINI_API_KEY` | yes | — | Google Gemini API key |
 | `ANTHROPIC_API_KEY` | no | — | Anthropic Claude API key (required to use `engine=claude`) |
 | `REDIS_URL` | no | `redis://localhost:6379` | Redis connection URL |
-| `API_KEY` | no | — | When set, `/api/analyze` + `/api/jobs` require it (`Authorization: Bearer <key>`, or `?token=` for WebSocket). Unset = auth disabled |
+| `API_KEY_DIR` | no | `api_keys/` | Durable on-disk store of issued API keys; manage with `scripts/manage_api_keys.py`. Empty = auth disabled |
+| `DEFAULT_DAILY_AI_CALL_LIMIT` | no | `1000` | Fallback daily AI-call quota for keys without their own `daily_limit` |
 | `CORS_ORIGINS` | no | `*` | Comma-separated allowed origins. `*` auto-disables credentials |
 | `TRUST_PROXY` | no | `false` | Read client IP from `X-Forwarded-For` (enable only behind a trusted proxy) |
 | `AI_ENGINE` | no | `gemini` | Default engine (`gemini` or `claude`) |

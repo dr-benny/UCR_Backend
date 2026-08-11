@@ -25,10 +25,12 @@ class Settings(BaseSettings):
     # Note: "*" forces allow_credentials=False — the combination is invalid per CORS spec.
     CORS_ORIGINS: str = "*"
 
-    # Auth — when set, all /api/analyze and /api/jobs routes require this key
+    # Auth — every key in API_KEY_DIR may call /api/analyze and /api/jobs routes
     # via `Authorization: Bearer <key>` (HTTP) or `?token=<key>` (WebSocket).
-    # Leave unset to disable auth (dev only).
-    API_KEY: str | None = None
+    # No keys on disk = auth disabled (dev only). See app/services/api_key_store.py.
+    API_KEY_DIR: str = "api_keys"
+    # Per-key daily AI-call budget used when a key doesn't set its own "daily_limit".
+    DEFAULT_DAILY_AI_CALL_LIMIT: int = 1000
 
     # Trust X-Forwarded-For for client IP (enable ONLY behind a proxy/LB you
     # control — otherwise clients can spoof the header to bypass rate limiting).

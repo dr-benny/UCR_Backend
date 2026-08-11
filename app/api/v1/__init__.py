@@ -4,12 +4,17 @@ from app.api.v1.engines import router as engines_router
 from app.api.v1.jobs import router as jobs_router
 from app.api.v1.prompts import router as prompts_router
 from app.api.v1.upload import router as upload_router
+from app.api.v1.usage import router as usage_router
 from app.core.auth import require_api_key
 
 router = APIRouter()
 
 # /api/engines stays public (only lists model names).
 router.include_router(engines_router)
+
+# /api/usage stays public too — the key passed as a query param is itself
+# the credential that identifies whose usage to return.
+router.include_router(usage_router)
 
 # Data + cost-bearing routes require an API key (no-op when API_KEY is unset).
 router.include_router(upload_router, dependencies=[Depends(require_api_key)])

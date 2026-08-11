@@ -9,9 +9,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 
+from app.core.auth import require_api_key
 from app.core.config import settings
 from app.schemas.job import JobListResponse, JobProgress, JobResponse
-from app.services import prompt_store
+from app.services import prompt_store, quota
 from app.services.ai_engines import get_engine
 from app.services.analysis_service import read_capped, save_image, validate_mime
 from app.services.job_service import cleanup_images
@@ -87,6 +88,7 @@ async def submit_image_job(
     model: str | None = Form(None, description="Model override (e.g. 'gemini-2.5-pro')"),
     samples: int | None = Form(None, ge=1, description="Self-consistency samples per image (overrides default)"),
     prompt_id: str | None = Form(None, description="Stored prompt to use (see /api/prompts); defaults to the built-in"),
+    key: dict[str, Any] | None = Depends(require_api_key),
 ) -> JobResponse:
     """
     Submit a batch of images for async AI analysis.
@@ -97,14 +99,18 @@ async def submit_image_job(
     if len(files) > 200:
         raise HTTPException(status_code=400, detail="Maximum 200 images per job")
 
-    if samples is not None and samples > settings.MAX_ANALYSIS_SAMPLES:
-        raise HTTPException(
-            status_code=400, detail=f"samples exceeds max of {settings.MAX_ANALYSIS_SAMPLES}"
-        )
+    max_samples = key.get("max_samples") if key else None
+    if max_samples is not None:
+        effective_samples = min(samples or settings.ANALYSIS_SAMPLES, max_samples)
+    else:
+        if samples is not None and samples > settings.MAX_ANALYSIS_SAMPLES:
+            raise HTTPException(
+                status_code=400, detail=f"samples exceeds max of {settings.MAX_ANALYSIS_SAMPLES}"
+            )
+        effective_samples = samples or settings.ANALYSIS_SAMPLES
 
     # Cost guard — reject before doing any work if the estimated AI call count
     # (images × samples) blows the budget (C1).
-    effective_samples = samples or settings.ANALYSIS_SAMPLES
     estimated_calls = len(files) * effective_samples
     if estimated_calls > settings.MAX_JOB_API_CALLS:
         raise HTTPException(
@@ -115,6 +121,9 @@ async def submit_image_job(
                 f"exceeding the limit of {settings.MAX_JOB_API_CALLS}"
             ),
         )
+
+    if key is not None:
+        await quota.check_and_consume(get_redis(), key, estimated_calls)
 
     # Validate engine/model early before touching any files
     try:
@@ -160,7 +169,7 @@ async def submit_image_job(
         "progress": {"current": 0, "total": total, "percent": 0, "active_files": [], "last_completed": None},
         "engine": resolved_engine,
         "model": model,  # None means each engine uses its own default
-        "samples": samples,
+        "samples": effective_samples,
         "concurrency": concurrency,  # persisted so retry reuses the original setting
         "prompt_id": prompt_id,  # reference, for display
         "prompt": prompt_text,   # snapshot of the text, what the worker actually uses
@@ -175,8 +184,8 @@ async def submit_image_job(
         "process_image_job",
         args=[job_id, {
             "images": saved, "concurrency": concurrency,
-            "engine": resolved_engine, "model": model, "samples": samples,
-            "prompt": prompt_text,
+            "engine": resolved_engine, "model": model, "samples": effective_samples,
+            "prompt": prompt_text, "prompt_id": prompt_id,
         }],
     )
     initial["_task_id"] = result.id
@@ -264,6 +273,7 @@ async def retry_job(
     job_id: str,
     engine: str | None = Form(None, description="Override AI engine for this retry"),
     model: str | None = Form(None, description="Override model for this retry"),
+    key: dict[str, Any] | None = Depends(require_api_key),
 ) -> JobResponse:
     """Re-queue a failed job using its original images. Optionally override engine/model."""
     if engine or model:
@@ -289,6 +299,10 @@ async def retry_job(
     missing = [img["filename"] for img in images if not os.path.exists(img["path"])]
     if missing:
         raise HTTPException(status_code=400, detail=f"Image files no longer on disk: {missing}")
+
+    if key is not None:
+        retry_samples = state.get("samples") or settings.ANALYSIS_SAMPLES
+        await quota.check_and_consume(redis, key, len(images) * retry_samples)
 
     resolved_engine = engine or state.get("engine") or settings.AI_ENGINE
     resolved_model = model or state.get("model")  # None = engine picks its own default
@@ -317,7 +331,7 @@ async def retry_job(
         args=[job_id, {
             "images": images, "concurrency": resolved_concurrency,
             "engine": resolved_engine, "model": resolved_model,
-            "samples": resolved_samples, "prompt": resolved_prompt,
+            "samples": resolved_samples, "prompt": resolved_prompt, "prompt_id": resolved_prompt_id,
         }],
     )
     new_state["_task_id"] = result.id

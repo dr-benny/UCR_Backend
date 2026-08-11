@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
+from app.core.auth import require_api_key
 from app.core.config import settings
-from app.services import prompt_store
+from app.services import prompt_store, quota
 from app.services.ai_engines import get_engine
 from app.services.analysis_service import analyze_image_bytes, read_capped, validate_mime
+from app.services.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,7 @@ async def analyze_single(
     model: str | None = Form(None, description="Model override (e.g. 'gemini-2.5-pro')"),
     samples: int | None = Form(None, ge=1, description="Self-consistency samples (overrides default)"),
     prompt_id: str | None = Form(None, description="Stored prompt to use (see /api/prompts); defaults to the built-in"),
+    key: dict[str, Any] | None = Depends(require_api_key),
 ) -> dict[str, Any]:
     """Analyze a single image synchronously — returns AI result immediately."""
     if engine or model:
@@ -46,7 +49,15 @@ async def analyze_single(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
-    _validate_samples(samples)
+    max_samples = key.get("max_samples") if key else None
+    if max_samples is not None:
+        effective_samples = min(samples or settings.ANALYSIS_SAMPLES, max_samples)
+    else:
+        _validate_samples(samples)
+        effective_samples = samples or settings.ANALYSIS_SAMPLES
+
+    if key is not None:
+        await quota.check_and_consume(get_redis(), key, effective_samples)
 
     prompt_text = _resolve_prompt(prompt_id)
 
@@ -65,9 +76,14 @@ async def analyze_single(
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     try:
-        return await analyze_image_bytes(
-            img_bytes, mime_type=mime, engine=engine, model=model, samples=samples, prompt=prompt_text
+        result = await analyze_image_bytes(
+            img_bytes, mime_type=mime, engine=engine, model=model, samples=effective_samples, prompt=prompt_text
         )
+        result["filename"] = file.filename
+        result["_engine"] = engine or settings.AI_ENGINE
+        result["_model"] = model
+        result["_prompt_id"] = prompt_id
+        return result
     except Exception as exc:
         logger.exception("Analysis failed")
         raise HTTPException(status_code=502, detail=f"AI analysis failed: {exc}")

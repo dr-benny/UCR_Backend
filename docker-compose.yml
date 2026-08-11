@@ -21,6 +21,7 @@ services:
       - .:/app
       - ./images:/app/images
       - ./prompt_store:/app/prompt_store   # durable prompt library (read/written only by the API)
+      - ./api_keys:/app/api_keys           # issued API keys (read/written only by the API)
     env_file:
       - .env
     environment:

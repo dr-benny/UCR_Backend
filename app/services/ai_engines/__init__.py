@@ -37,16 +37,16 @@ _REGISTRY: dict[str, tuple[str, str, list[str]]] = {
             "gemini-1.5-pro",
         ],
     ),
-    "claude": (
-        "app.services.ai_engines.claude_engine",
-        "ClaudeEngine",
-        [
-            "claude-opus-4-8",
-            "claude-opus-4-6",
-            "claude-sonnet-4-6",
-            "claude-haiku-4-5-20251001",
-        ],
-    ),
+    # "claude": (
+    #     "app.services.ai_engines.claude_engine",
+    #     "ClaudeEngine",
+    #     [
+    #         "claude-opus-4-8",
+    #         "claude-opus-4-6",
+    #         "claude-sonnet-4-6",
+    #         "claude-haiku-4-5-20251001",
+    #     ],
+    # ),
     # Future engines — uncomment and add engine file when ready:
     # "gpt4": ("app.services.ai_engines.gpt_engine", "GPTEngine", [
     #     "gpt-4o", "gpt-4o-mini",

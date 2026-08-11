@@ -65,6 +65,11 @@ class InMemoryRedis:
         self._store[key] = val
         return val
 
+    async def incrby(self, key, amount):
+        val = int(self._store.get(key, 0)) + amount
+        self._store[key] = val
+        return val
+
     async def expire(self, *_):
         pass
 
